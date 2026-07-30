@@ -1,0 +1,21 @@
+sensitivity_levels:
+  PUBLIC:
+    description: "Publicly accessible documentation."
+    default_policy: "ALLOW"
+    strictness: "LOW"
+  INTERNAL:
+    description: "Internal company communications and policies."
+    default_policy: "ALLOW"
+    strictness: "MEDIUM"
+  CONFIDENTIAL:
+    description: "Confidential company assets, metrics, and architecture."
+    default_policy: "EVALUATE"
+    strictness: "HIGH"
+  RESTRICTED:
+    description: "Restricted data containing PII or proprietary IP."
+    default_policy: "EVALUATE"
+    strictness: "HIGH"
+  SECRET:
+    description: "Strict secrets, credentials, keys, and private infrastructure."
+    default_policy: "BLOCK"
+    strictness: "CRITICAL"

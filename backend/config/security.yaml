@@ -1,0 +1,5 @@
+security_mode: "PRODUCTION"
+expose_confidential_sources: false
+sanitize_sources_on_block: true
+expose_document_names: false
+expose_sensitive_values: false

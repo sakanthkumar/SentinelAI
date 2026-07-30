@@ -1,0 +1,28 @@
+policy_name: "Enterprise Data Loss Prevention Policy"
+version: "2.0.0"
+blocked_categories:
+  - PASSWORD
+  - DATABASE_CREDENTIAL
+  - API_KEY
+  - TOKEN
+  - SECRET
+  - SSH_KEY
+  - PRIVATE_KEY
+  - CONNECTION_STRING
+  - INTERNAL_HOSTNAME
+  - INTERNAL_IP
+  - CUSTOMER_PII
+  - EMPLOYEE_PII
+  - FINANCIAL_DATA
+  - TRADE_SECRET
+  - PROPRIETARY_ALGORITHM
+  - BUSINESS_PLAN
+
+allowed_categories:
+  - GENERAL_INFORMATION
+  - SECURITY_POLICY
+  - OTHER
+
+confidence_threshold: 0.80
+
+default_replacement_message: "Response blocked due to enterprise security policy."

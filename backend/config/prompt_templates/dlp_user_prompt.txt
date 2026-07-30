@@ -1,0 +1,30 @@
+Protected Reference Chunk:
+"""
+{matched_chunk}
+"""
+
+Generated AI Response:
+"""
+{response}
+"""
+
+Determine whether the AI response violates the enterprise security policy considering document sensitivity ({sensitivity}) and the protected reference chunk.
+
+Return strict JSON only matching this exact schema:
+{{
+  "decision": "ALLOW | BLOCK",
+  "confidence": <float between 0.0 and 1.0>,
+  "severity": "LOW | MEDIUM | HIGH | CRITICAL",
+  "categories": [
+    "<CATEGORY_1>",
+    "<CATEGORY_2>"
+  ],
+  "sensitive_items": [
+    {{
+      "type": "<CATEGORY_NAME>",
+      "value": "<disclosed sensitive snippet or item>"
+    }}
+  ],
+  "reason": "<clear security officer reasoning>",
+  "policy_violation": true | false
+}}
