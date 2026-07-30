@@ -1,28 +1,19 @@
-fastapi
-uvicorn
-python-dotenv
-python-multipart
-langchain
-langgraph
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+gunicorn>=21.2.0
+python-dotenv>=1.0.1
+python-multipart>=0.0.9
+pyyaml>=6.0.1
+pydantic>=2.6.0
 
-langchain-community
-langchain-core
-langchain-text-splitters
-langchain-chroma
+chromadb>=0.4.24
+sentence-transformers>=2.5.1
 
-chromadb
+groq>=0.4.2
+ollama>=0.1.7
 
-sentence-transformers
+pypdf>=4.1.0
+python-docx>=1.1.0
 
-groq
-
-ollama
-
-pypdf
-
-python-docx
-
-sqlalchemy
-pymysql
-
-pydantic
+sqlalchemy>=2.0.28
+pymysql>=1.1.0

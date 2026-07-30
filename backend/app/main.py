@@ -108,6 +108,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Shutting down SentinelAI application services.")
 
 
+import os
+from fastapi import Request, HTTPException, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -119,10 +122,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS for frontend integration
+# Dynamic CORS origins configuration from environment
+cors_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
+allowed_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+if "*" not in allowed_origins:
+    allowed_origins.extend(["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins if allowed_origins else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -130,12 +138,25 @@ app.add_middleware(
 
 from app.api.dashboard import router as dashboard_router
 
-# Register routers
+# Register REST API routers
 app.include_router(health_router)
 app.include_router(upload_router)
 app.include_router(chat_router)
 app.include_router(knowledge_base_router)
 app.include_router(dashboard_router)
+
+# Global production exception handler preventing stack trace disclosure
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error("Unhandled server error processing request %s: %s", request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "status": "error",
+            "message": "An internal server error occurred while processing the request.",
+            "path": request.url.path,
+        },
+    )
 
 
 @app.get("/", include_in_schema=False)
