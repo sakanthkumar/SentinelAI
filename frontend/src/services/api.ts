@@ -13,7 +13,12 @@ import type {
   UploadResponse,
 } from "../types";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const getBaseUrl = (): string => {
+  const rawUrl = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").trim();
+  return rawUrl.replace(/\/+$/, "").replace(/\/health$/, "");
+};
+
+const BASE_URL = getBaseUrl();
 
 class ApiError extends Error {
   constructor(
