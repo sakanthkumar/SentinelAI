@@ -82,6 +82,32 @@ export const documentsApi = {
     });
     return handleResponse<BulkIngestResponse>(response);
   },
+
+  async list(): Promise<DocumentDetail[]> {
+    const response = await fetch(`${BASE_URL}/api/documents`, {
+      method: "GET",
+    });
+    return handleResponse<DocumentDetail[]>(response);
+  },
+
+  async deleteDocument(documentId: string): Promise<any> {
+    const response = await fetch(`${BASE_URL}/api/documents/${encodeURIComponent(documentId)}`, {
+      method: "DELETE",
+    });
+    return handleResponse<any>(response);
+  },
+
+  async bulkUpload(files: File[], classification: string = "public"): Promise<any> {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+    formData.append("classification", classification);
+
+    const response = await fetch(`${BASE_URL}/api/documents/bulk-upload`, {
+      method: "POST",
+      body: formData,
+    });
+    return handleResponse<any>(response);
+  },
 };
 
 export const dashboardApi = {

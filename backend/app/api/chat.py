@@ -89,7 +89,7 @@ class ChatResponse(BaseModel):
         "and evaluates the answer for exfiltration risks via LeakDetector."
     ),
 )
-async def chat_query(
+def chat_query(
     request: ChatRequest,
     http_request: Request,
     rag_pipeline: RAGPipeline = Depends(get_rag_pipeline),

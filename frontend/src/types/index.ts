@@ -77,11 +77,14 @@ export interface HealthResponse {
 }
 
 export interface DocumentDetail {
+  id: string;
   name: string;
   classification: string;
   indexed: boolean;
   source: string;
   chunks: number;
+  size_bytes?: number;
+  upload_time?: string;
 }
 
 export interface DashboardStatsResponse {

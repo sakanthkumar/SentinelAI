@@ -66,7 +66,7 @@ class UploadResponse(BaseModel):
         "chunked, embedded, and stored into the ChromaDB vector store."
     ),
 )
-async def upload_document(
+def upload_document(
     file: UploadFile = File(...),
     classification: str = Form(default="public", description="Document security classification ('public' or 'confidential')"),
     ingestion_service: IngestionService = Depends(get_ingestion_service),
@@ -103,7 +103,7 @@ async def upload_document(
 
     # 2. Read file content and reject empty files
     try:
-        content = await file.read()
+        content = file.file.read()
     except Exception as exc:
         logger.error("Failed to read upload payload for file '%s': %s", filename, exc)
         raise HTTPException(

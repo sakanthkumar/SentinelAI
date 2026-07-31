@@ -63,9 +63,10 @@ In GenAI applications, keyword matching fails fundamentally due to **semantic ob
 | **Factual Overlap Evaluation** | LLM-based reasoning agent analyzing implicit and explicit factual leakage. |
 | **Declarative PolicyEngine** | Configurable YAML rules enforcing category blocks (`PASSWORD`, `API_KEY`, `PII`, etc.). |
 | **Production Secret Redaction** | Zero-leakage serialization replacing cleartext secret values with `[REDACTED]`. |
+| **Centralized Audit Logger** | Thread-safe backend service (`SecurityAuditLogger`) persisting audit events to `storage/audit_events.json`. |
+| **Payload DoS Protection** | Strict input validation enforcing 4,000 char prompt limit and 20MB file upload limit. |
 | **Source Sanitization** | Internal chunk text stripping to prevent side-channel exfiltration in REST payloads. |
 | **Bulk Knowledge Base Ingestion** | Automatic directory scanning, classification inference, chunking, and deduplication. |
-| **SIEM Audit Logging** | Auditable security telemetry capturing timestamps, confidence, severity, and violations. |
 | **FastAPI REST Service** | Asynchronous, typed Python backend with OpenAPI documentation and CORS support. |
 | **React Enterprise UI** | Dark-themed, responsive dashboard built with React, TypeScript, and Tailwind CSS. |
 | **In-Memory Chat State** | Persistent conversation state surviving route navigation until explicit session clear. |
@@ -103,7 +104,7 @@ SentinelAI/
 │   │   │   └── retriever.py         # Dense Vector Retrieval Engine
 │   │   ├── api/                     # REST API Endpoints
 │   │   │   ├── chat.py              # POST /chat RAG query endpoint
-│   │   │   ├── dashboard.py         # GET /api/dashboard telemetry endpoints
+│   │   │   ├── dashboard.py         # GET /api/dashboard telemetry & events endpoints
 │   │   │   ├── health.py            # GET /health operational check
 │   │   │   ├── knowledge_base.py    # POST /api/knowledge-base/ingest endpoint
 │   │   │   └── upload.py            # POST /upload file ingestion endpoint
@@ -117,6 +118,7 @@ SentinelAI/
 │   │   │   ├── factory.py           # Provider Factory (Groq / Ollama)
 │   │   │   └── groq_provider.py     # Groq API Client
 │   │   ├── services/                # Base System Services
+│   │   │   ├── audit_logger.py      # Thread-safe Security Audit Logging Service
 │   │   │   ├── chunking.py          # Text Chunking Service
 │   │   │   ├── document_loader.py   # PDF / DOCX Ingestion Loader
 │   │   │   ├── embeddings.py        # Embedding Model Interface
@@ -127,6 +129,8 @@ SentinelAI/
 │   │   ├── dlp_policy.yaml          # Category rules & action policies
 │   │   ├── security.yaml            # Security mode & redaction flags
 │   │   └── prompt_templates/        # System prompt templates
+│   ├── storage/                     # Persistent Application Storage
+│   │   └── audit_events.json        # Centralized security audit log store
 │   ├── .env.example                 # Backend environment variable template
 │   └── requirements.txt             # Python dependencies manifest
 │
@@ -307,10 +311,17 @@ Every interaction generates an auditable `LeakDetectionResult` payload recorded 
 }
 ```
 
-### 4. Telemetry Endpoints (`GET /api/dashboard/*`)
+### 4. Document Management Endpoints (`/api/documents`)
+
+- `GET /api/documents`: Returns comprehensive list of all indexed documents with document IDs, chunk counts, classification badges, and file sizes.
+- `DELETE /api/documents/{document_id}`: Permanently deletes document by `document_id`, purges vector embeddings from ChromaDB (`enterprise_docs` & `protected_vault`), removes physical disk files, logs audit events, and updates telemetry.
+- `POST /api/documents/bulk-upload`: Accepts multiple PDF/DOCX files, classifies as `public` or `confidential`, auto-ingests into vector stores, and returns per-file processing results.
+
+### 5. Telemetry Endpoints (`GET /api/dashboard/*`)
 
 - `GET /api/dashboard/stats`: Returns live document counts, vault health, and query statistics.
 - `GET /api/dashboard/documents`: Returns list of ingested documents and repository locations.
+- `GET /api/dashboard/events`: Returns live security audit events log (`SecurityAuditLogger`).
 - `GET /api/dashboard/system-health`: Returns health status of FastAPI, ChromaDB, LLM, Semantic DLP, and PolicyEngine.
 
 ---

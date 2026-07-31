@@ -134,10 +134,13 @@ class IngestionService:
         embeddings = self.embedding_service.embed_documents(chunks)
 
         # 6. Generate deterministic IDs and metadata for each chunk containing classification and document_type
+        import hashlib
+        doc_id = f"doc_{hashlib.md5(path.name.encode('utf-8')).hexdigest()[:12]}"
         doc_id_prefix = path.stem
         chunk_ids = [f"{doc_id_prefix}_{idx}" for idx in range(len(chunks))]
         metadatas = [
             {
+                "document_id": doc_id,
                 "source": path.name,
                 "classification": classification,
                 "document_type": document_type,

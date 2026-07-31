@@ -93,6 +93,49 @@ class VectorStore:
                 f"Failed to delete existing vectors for source document '{source}': {exc}"
             ) from exc
 
+    def delete_documents_by_document_id(self, document_id: str, source: str | None = None) -> int:
+        """Delete vector embeddings by document_id metadata filter, falling back to source.
+
+        Args:
+            document_id (str): Unique document identifier.
+            source (str | None): Optional source filename fallback.
+
+        Returns:
+            int: Total count of deleted vector chunk embeddings.
+        """
+        if not document_id or not document_id.strip():
+            raise ValueError("document_id cannot be empty.")
+
+        deleted_count = 0
+        try:
+            # 1. Try deleting by document_id metadata
+            by_id = self._collection.get(where={"document_id": document_id})
+            ids_to_del = by_id.get("ids", []) if by_id else []
+            if ids_to_del:
+                self._collection.delete(where={"document_id": document_id})
+                deleted_count += len(ids_to_del)
+
+            # 2. Fallback to source filename if provided and no IDs matched by document_id
+            if deleted_count == 0 and source and source.strip():
+                by_source = self._collection.get(where={"source": source.strip()})
+                ids_to_del_source = by_source.get("ids", []) if by_source else []
+                if ids_to_del_source:
+                    self._collection.delete(where={"source": source.strip()})
+                    deleted_count += len(ids_to_del_source)
+
+            logger.info(
+                "Deleted %d vector chunk(s) for document_id '%s' (source='%s') from collection '%s'.",
+                deleted_count,
+                document_id,
+                source,
+                self.collection_name,
+            )
+            return deleted_count
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to delete vectors for document_id '{document_id}' in collection '{self.collection_name}': {exc}"
+            ) from exc
+
     def add_documents(
         self,
         ids: list[str],

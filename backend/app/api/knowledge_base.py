@@ -70,7 +70,7 @@ class BulkIngestResponse(BaseModel):
         "and bulk ingest all supported documents (.pdf, .docx) into the ChromaDB vector store."
     ),
 )
-async def bulk_ingest_knowledge_base(
+def bulk_ingest_knowledge_base(
     ingestion_service: IngestionService = Depends(get_ingestion_service),
 ) -> BulkIngestResponse:
     """Orchestrate bulk knowledge base document ingestion."""

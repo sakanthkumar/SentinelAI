@@ -184,7 +184,7 @@ def _get_documents_list(request: Request | None = None) -> list[DocumentDetail]:
     summary="Get Dashboard Statistics",
     description="Retrieve live metric counts and protected vault telemetry.",
 )
-async def get_dashboard_stats(request: Request) -> DashboardStatsResponse:
+def get_dashboard_stats(request: Request) -> DashboardStatsResponse:
     """Return real metrics computed from system state and vector store."""
     logger.info("Received request for dashboard statistics")
 
@@ -238,7 +238,7 @@ async def get_dashboard_stats(request: Request) -> DashboardStatsResponse:
     summary="Get Protected Documents List",
     description="Retrieve list of documents indexed in public or confidential vector store.",
 )
-async def get_dashboard_documents(request: Request) -> list[DocumentDetail]:
+def get_dashboard_documents(request: Request) -> list[DocumentDetail]:
     """Return list of actual documents from ChromaDB vector store."""
     logger.info("Received request for dashboard documents list")
     return _get_documents_list(request)
@@ -251,7 +251,7 @@ async def get_dashboard_documents(request: Request) -> list[DocumentDetail]:
     summary="Get Security Audit Events",
     description="Retrieve live security evaluation audit events from persistent backend audit log.",
 )
-async def get_dashboard_events(
+def get_dashboard_events(
     request: Request,
     limit: int = 50,
     decision: str | None = None,
@@ -281,7 +281,7 @@ async def get_dashboard_events(
     summary="Get System Health Telemetry",
     description="Retrieve operational health status across core system components.",
 )
-async def get_system_health(request: Request) -> SystemHealthResponse:
+def get_system_health(request: Request) -> SystemHealthResponse:
     """Return health status of FastAPI, ChromaDB, LLM, PolicyEngine, and Semantic DLP."""
     logger.info("Received request for system component health telemetry")
 

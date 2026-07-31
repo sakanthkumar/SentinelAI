@@ -1,119 +1,123 @@
 /**
- * Custom hook for managing document upload queue and bulk ingestion.
+ * Custom hook for managing document upload queue, multi-file bulk ingestion, and single-click deletion.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { documentsApi } from "../services/api";
-import type { BulkIngestResponse, DocumentItem, UploadResponse } from "../types";
+import type { BulkIngestResponse, DocumentDetail } from "../types";
 
 export function useUpload() {
-  const [documents, setDocuments] = useState<DocumentItem[]>(() => {
-    try {
-      const stored = localStorage.getItem("sentinel_documents");
-      if (stored) return JSON.parse(stored);
-    } catch {
-      // fallback
-    }
-    return [
-      {
-        id: "doc-1",
-        name: "company_faq.pdf",
-        classification: "public",
-        documentType: "policy",
-        chunks: 14,
-        status: "indexed",
-        uploadedAt: "2026-07-30 10:00",
-      },
-      {
-        id: "doc-2",
-        name: "financial_report_q2_2026.pdf",
-        classification: "confidential",
-        documentType: "financial",
-        chunks: 32,
-        status: "protected",
-        uploadedAt: "2026-07-30 10:15",
-      },
-      {
-        id: "doc-3",
-        name: "database_credentials.pdf",
-        classification: "confidential",
-        documentType: "database",
-        chunks: 8,
-        status: "protected",
-        uploadedAt: "2026-07-30 10:30",
-      },
-    ];
-  });
-
+  const [documents, setDocuments] = useState<DocumentDetail[]>([]);
+  const [isLoadingDocs, setIsLoadingDocs] = useState<boolean>(true);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [isBulkIngesting, setIsBulkIngesting] = useState<boolean>(false);
   const [bulkIngestResult, setBulkIngestResult] = useState<BulkIngestResponse | null>(null);
   const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  const saveDocuments = (docs: DocumentItem[]) => {
-    setDocuments(docs);
+  const fetchDocuments = useCallback(async () => {
     try {
-      localStorage.setItem("sentinel_documents", JSON.stringify(docs));
-    } catch {
-      // fallback
-    }
-  };
-
-  const uploadFile = useCallback(async (file: File, classification: "public" | "confidential") => {
-    setIsUploading(true);
-    setNotification(null);
-
-    const tempId = `doc-${Date.now()}`;
-    const newDoc: DocumentItem = {
-      id: tempId,
-      name: file.name,
-      classification,
-      documentType: "processing...",
-      chunks: 0,
-      status: "uploading",
-      uploadedAt: new Date().toISOString().replace("T", " ").slice(0, 16),
-    };
-
-    saveDocuments([newDoc, ...documents]);
-
-    try {
-      const res: UploadResponse = await documentsApi.upload(file, classification);
-
-      const updatedDoc: DocumentItem = {
-        id: tempId,
-        name: res.filename,
-        classification: (res.classification.toLowerCase() as "public" | "confidential") || classification,
-        documentType: res.classification === "confidential" ? "protected" : "public",
-        chunks: res.chunks,
-        status: res.classification === "confidential" ? "protected" : "indexed",
-        uploadedAt: new Date().toISOString().replace("T", " ").slice(0, 16),
-      };
-
-      setDocuments((prev) => {
-        const next = prev.map((d) => (d.id === tempId ? updatedDoc : d));
-        localStorage.setItem("sentinel_documents", JSON.stringify(next));
-        return next;
-      });
-
-      setNotification({
-        type: "success",
-        message: `Successfully ingested '${res.filename}' into vector store (${res.chunks} chunks).`,
-      });
+      const data = await documentsApi.list();
+      if (Array.isArray(data)) {
+        setDocuments(data);
+      }
     } catch (err: any) {
-      setDocuments((prev) => {
-        const next = prev.map((d) => (d.id === tempId ? { ...d, status: "failed" as const } : d));
-        localStorage.setItem("sentinel_documents", JSON.stringify(next));
-        return next;
-      });
-
-      setNotification({
-        type: "error",
-        message: err.message || `Failed to upload and ingest '${file.name}'.`,
-      });
+      logger_fallback(err);
     } finally {
-      setIsUploading(false);
+      setIsLoadingDocs(false);
     }
-  }, [documents]);
+  }, []);
+
+  useEffect(() => {
+    fetchDocuments();
+  }, [fetchDocuments]);
+
+  function logger_fallback(err: any) {
+    // Silent fallback
+  }
+
+  const uploadFile = useCallback(
+    async (file: File, classification: "public" | "confidential") => {
+      setIsUploading(true);
+      setNotification(null);
+
+      try {
+        const res = await documentsApi.upload(file, classification);
+        await fetchDocuments();
+        setNotification({
+          type: "success",
+          message: `Successfully ingested '${res.filename}' into vector store (${res.chunks} chunks).`,
+        });
+      } catch (err: any) {
+        setNotification({
+          type: "error",
+          message: err.message || `Failed to upload and ingest '${file.name}'.`,
+        });
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [fetchDocuments]
+  );
+
+  const bulkUpload = useCallback(
+    async (files: File[], classification: "public" | "confidential") => {
+      setIsUploading(true);
+      setNotification(null);
+
+      try {
+        const res = await documentsApi.bulkUpload(files, classification);
+        await fetchDocuments();
+        const successCount = res.successful || 0;
+        const failCount = res.failed || 0;
+
+        if (failCount === 0) {
+          setNotification({
+            type: "success",
+            message: `Successfully ingested ${successCount} document(s) into vector store.`,
+          });
+        } else {
+          setNotification({
+            type: "error",
+            message: `Bulk upload completed: ${successCount} succeeded, ${failCount} failed. Check document list for details.`,
+          });
+        }
+        return res;
+      } catch (err: any) {
+        setNotification({
+          type: "error",
+          message: err.message || "Failed to execute multi-file bulk upload.",
+        });
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [fetchDocuments]
+  );
+
+  const deleteDocument = useCallback(
+    async (documentId: string) => {
+      setIsDeletingId(documentId);
+      setNotification(null);
+
+      try {
+        const res = await documentsApi.deleteDocument(documentId);
+        await fetchDocuments();
+        setNotification({
+          type: "success",
+          message: res.message || `Document deleted successfully and vectors purged from ChromaDB.`,
+        });
+      } catch (err: any) {
+        setNotification({
+          type: "error",
+          message: err.message || `Failed to delete document '${documentId}'.`,
+        });
+      } finally {
+        setIsDeletingId(null);
+      }
+    },
+    [fetchDocuments]
+  );
 
   const triggerBulkIngest = useCallback(async () => {
     setIsBulkIngesting(true);
@@ -123,6 +127,7 @@ export function useUpload() {
     try {
       const res: BulkIngestResponse = await documentsApi.bulkIngest();
       setBulkIngestResult(res);
+      await fetchDocuments();
 
       setNotification({
         type: "success",
@@ -136,16 +141,21 @@ export function useUpload() {
     } finally {
       setIsBulkIngesting(false);
     }
-  }, []);
+  }, [fetchDocuments]);
 
   return {
     documents,
+    isLoadingDocs,
     isUploading,
+    isDeletingId,
     isBulkIngesting,
     bulkIngestResult,
     notification,
     uploadFile,
+    bulkUpload,
+    deleteDocument,
     triggerBulkIngest,
+    refreshDocuments: fetchDocuments,
     clearNotification: () => setNotification(null),
   };
 }

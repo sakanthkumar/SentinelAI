@@ -1,26 +1,31 @@
 """SentinelAI Enterprise AI Security Platform REST API Application.
 
-Main entrypoint configuring FastAPI, registering health, upload, chat, and knowledge base routers,
-and initializing singletons via lifespan dependency management.
+Main entrypoint configuring FastAPI, registering health, upload, chat, knowledge base,
+dashboard, and documents routers, and initializing singletons via lifespan dependency management.
 """
 
-from app.detection.similarity_detector import SimilarityDetector
 from contextlib import asynccontextmanager
 import logging
+import os
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import uvicorn
 
 from app.ai.rag_pipeline import RAGPipeline
 from app.ai.retriever import Retriever
 from app.api.chat import router as chat_router
+from app.api.dashboard import router as dashboard_router
+from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.knowledge_base import router as knowledge_base_router
 from app.api.upload import router as upload_router
 from app.detection.leak_detector import LeakDetector
-from app.llm.factory import LLMFactory
 from app.detection.similarity_detector import SimilarityDetector
+from app.llm.factory import LLMFactory
+from app.services.audit_logger import SecurityAuditLogger
 from app.services.chunking import TextChunker
 from app.services.document_loader import DocumentLoader
 from app.services.embeddings import EmbeddingService
@@ -40,7 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle and initialize singletons on startup.
 
     Initialization order:
-    EmbeddingService -> VectorStore -> Retriever -> LLMFactory -> BaseLLM -> LeakDetector -> RAGPipeline -> IngestionService
+    EmbeddingService -> VectorStore -> Retriever -> LLMFactory -> BaseLLM -> LeakDetector -> RAGPipeline -> IngestionService -> SecurityAuditLogger
     """
     logger.info("Initializing SentinelAI core backend services...")
 
@@ -48,7 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # 1. EmbeddingService
         embedding_service = EmbeddingService()
 
-        # 2. VectorStore
+        # 2. Primary VectorStore (enterprise_docs)
         vector_store = VectorStore()
 
         # 3. Retriever
@@ -60,7 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # 4. Protected Vault & LLM Provider
         protected_vault = VectorStore(collection_name="protected_vault")
         llm = LLMFactory.get_provider()
-        
+
         # 5. Shared SimilarityDetector using cached protected_vault
         similarity_detector = SimilarityDetector(
             embedding_service=embedding_service,
@@ -89,7 +94,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
         # 9. SecurityAuditLogger
-        from app.services.audit_logger import SecurityAuditLogger
         audit_logger = SecurityAuditLogger()
 
         # Store singletons in application state for dependency injection across requests
@@ -107,18 +111,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     except Exception as exc:
         logger.error("Failed to initialize SentinelAI core backend services: %s", exc)
-        # Allow application to boot while logging initialization warning if environment restrictions apply
-        pass
 
     yield
 
     logger.info("Shutting down SentinelAI application services.")
 
-
-import os
-from fastapi import Request, HTTPException, status
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="SentinelAI",
@@ -143,14 +140,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.api.dashboard import router as dashboard_router
-
 # Register REST API routers
 app.include_router(health_router)
 app.include_router(upload_router)
 app.include_router(chat_router)
 app.include_router(knowledge_base_router)
 app.include_router(dashboard_router)
+app.include_router(documents_router)
+
 
 # Global production exception handler preventing stack trace disclosure
 @app.exception_handler(Exception)
