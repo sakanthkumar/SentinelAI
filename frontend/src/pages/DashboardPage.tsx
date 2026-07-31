@@ -59,14 +59,16 @@ const DocumentRow = memo(({ doc }: { doc: DocumentDetail }) => {
 DocumentRow.displayName = "DocumentRow";
 
 const ActivityRow = memo(({ evt }: { evt: SecurityEvent }) => {
-  const isBlock = evt.decision === "BLOCK";
+  const isBlock = evt?.decision === "BLOCK";
+  const categoriesList = Array.isArray(evt?.categories) ? evt.categories : [];
+  const displayTime = evt?.timestamp ? new Date(evt.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--";
   return (
     <tr className="hover:bg-slate-800/40 transition-colors">
       <td className="py-3 px-3 font-mono text-slate-400 text-[11px] whitespace-nowrap">
-        {new Date(evt.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        {displayTime}
       </td>
       <td className="py-3 px-3 font-medium text-slate-200 max-w-[140px] truncate">
-        {evt.question}
+        {evt?.question || "N/A"}
       </td>
       <td className="py-3 px-3 whitespace-nowrap">
         {isBlock ? (
@@ -81,11 +83,11 @@ const ActivityRow = memo(({ evt }: { evt: SecurityEvent }) => {
       </td>
       <td className="py-3 px-3 whitespace-nowrap">
         <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300">
-          {evt.severity}
+          {evt?.severity || "LOW"}
         </span>
       </td>
       <td className="py-3 px-3 font-mono text-[10px] text-indigo-300 whitespace-nowrap">
-        {evt.categories[0] || "GENERAL"}
+        {categoriesList[0] || "GENERAL"}
       </td>
     </tr>
   );

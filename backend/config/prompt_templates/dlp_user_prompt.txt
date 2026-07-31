@@ -1,30 +1,35 @@
-Protected Reference Chunk:
-"""
+User Question
+
+{user_query}
+
+-------------------------------------------------------
+
+Retrieved Enterprise Context
+
 {matched_chunk}
-"""
 
-Generated AI Response:
-"""
+-------------------------------------------------------
+
+Generated AI Response
+
 {response}
-"""
 
-Determine whether the AI response violates the enterprise security policy considering document sensitivity ({sensitivity}) and the protected reference chunk.
+-------------------------------------------------------
 
-Return strict JSON only matching this exact schema:
-{{
-  "decision": "ALLOW | BLOCK",
-  "confidence": <float between 0.0 and 1.0>,
-  "severity": "LOW | MEDIUM | HIGH | CRITICAL",
-  "categories": [
-    "<CATEGORY_1>",
-    "<CATEGORY_2>"
-  ],
-  "sensitive_items": [
-    {{
-      "type": "<CATEGORY_NAME>",
-      "value": "<disclosed sensitive snippet or item>"
-    }}
-  ],
-  "reason": "<clear security officer reasoning>",
-  "policy_violation": true | false
-}}
+Sensitivity Level
+
+{sensitivity}
+
+-------------------------------------------------------
+
+Classify the type of information disclosed in the generated response.
+
+Remember:
+
+• Classify ONLY the information in the response, not the entire document.
+
+• Use the user question to understand intent.
+
+• Ignore confidential information that is present in the retrieved context but not actually disclosed.
+
+Return ONLY valid JSON matching the schema.

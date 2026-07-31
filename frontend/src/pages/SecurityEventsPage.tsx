@@ -161,7 +161,7 @@ export const SecurityEventsPage: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-4">
                       <div className="flex flex-wrap gap-1">
-                        {evt.categories.map((cat, idx) => (
+                        {(Array.isArray(evt.categories) ? evt.categories : []).map((cat, idx) => (
                           <span
                             key={idx}
                             className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-indigo-950 text-indigo-300 border border-indigo-800/60"

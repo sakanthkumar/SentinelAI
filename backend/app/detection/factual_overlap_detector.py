@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 SUPPORTED_CATEGORIES = {
     "PASSWORD", "DATABASE_CREDENTIAL", "API_KEY", "TOKEN", "SECRET",
     "SSH_KEY", "PRIVATE_KEY", "CONNECTION_STRING", "INTERNAL_HOSTNAME",
-    "INTERNAL_IP", "CUSTOMER_PII", "EMPLOYEE_PII", "FINANCIAL_DATA",
+    "INTERNAL_IP", "CUSTOMER_PII", "EMPLOYEE_PII", "PAYROLL_DATA", "FINANCIAL_DATA",
     "TRADE_SECRET", "PROPRIETARY_ALGORITHM", "BUSINESS_PLAN",
-    "GENERAL_INFORMATION", "SECURITY_POLICY", "OTHER"
+    "GENERAL_INFORMATION", "HR_POLICY", "SECURITY_POLICY", "OTHER"
 }
 
 
@@ -50,6 +50,7 @@ class FactualOverlapDetector:
         sensitivity: str | None = None,
         document_type: str | None = None,
         source: str | None = None,
+        user_query: str | None = None,
     ) -> OverlapResult:
         """Evaluate whether the generated response exposes sensitive information from a protected vault chunk.
 
@@ -60,6 +61,7 @@ class FactualOverlapDetector:
             sensitivity (str | None): Document sensitivity ('PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED', 'SECRET').
             document_type (str | None): Inferred document type (e.g., 'financial', 'credentials').
             source (str | None): Source document filename.
+            user_query (str | None): Original user question query.
 
         Returns:
             OverlapResult: Typed DLP evaluation result containing decision, categories, sensitive_items, and reasoning.
@@ -76,6 +78,7 @@ class FactualOverlapDetector:
         doc_sensitivity = (sensitivity or "CONFIDENTIAL").upper()
         doc_type = document_type or "general"
         doc_source = source or "unknown"
+        query_text = user_query or "General inquiry"
 
         enterprise_policy_str = self.policy_engine.format_policy_for_prompt()
 
@@ -92,6 +95,7 @@ class FactualOverlapDetector:
             matched_chunk=clean_chunk,
             response=clean_response,
             sensitivity=doc_sensitivity,
+            user_query=query_text,
         )
 
         messages = [
@@ -150,11 +154,12 @@ class FactualOverlapDetector:
         )
 
     def _sanitize_overlap_dict(self, data: dict[str, Any]) -> OverlapResult:
-        """Sanitize and validate extracted JSON fields."""
-        raw_decision = str(data.get("decision", "")).strip().upper()
-        raw_violation = bool(data.get("policy_violation", False))
-        decision = raw_decision if raw_decision in {"ALLOW", "BLOCK"} else ("BLOCK" if raw_violation else "ALLOW")
+        """Sanitize and validate LLM classification output.
 
+        The LLM is a semantic classifier only — it returns category, confidence,
+        severity, reason, and sensitive_items. It does NOT return a decision or
+        policy_violation. Those are determined by PolicyEngine.
+        """
         raw_conf = data.get("confidence", 0.0)
         try:
             confidence = max(0.0, min(1.0, float(raw_conf)))
@@ -162,7 +167,10 @@ class FactualOverlapDetector:
             confidence = 0.0
 
         raw_severity = str(data.get("severity", "")).strip().upper()
-        severity = raw_severity if raw_severity in {"LOW", "MEDIUM", "HIGH", "CRITICAL"} else ("HIGH" if decision == "BLOCK" else "LOW")
+        severity = raw_severity if raw_severity in {"LOW", "MEDIUM", "HIGH", "CRITICAL"} else "LOW"
+
+        info_type = str(data.get("information_type", "")).strip()
+        single_cat = str(data.get("category", "")).strip().upper()
 
         # Parse multiple categories
         raw_categories = data.get("categories", [])
@@ -171,12 +179,21 @@ class FactualOverlapDetector:
         elif not isinstance(raw_categories, list):
             raw_categories = []
 
+        if single_cat and single_cat not in raw_categories:
+            raw_categories.insert(0, single_cat)
+
         categories = [
             cat.strip().upper() for cat in raw_categories
             if isinstance(cat, str) and cat.strip().upper() in SUPPORTED_CATEGORIES
         ]
         if not categories:
-            categories = ["SECRET"] if decision == "BLOCK" else ["GENERAL_INFORMATION"]
+            categories = [single_cat] if single_cat in SUPPORTED_CATEGORIES else ["GENERAL_INFORMATION"]
+
+        if not single_cat or single_cat not in SUPPORTED_CATEGORIES:
+            single_cat = categories[0]
+
+        if not info_type:
+            info_type = single_cat.replace("_", " ").title()
 
         # Parse structured sensitive items
         raw_items = data.get("sensitive_items", [])
@@ -184,7 +201,7 @@ class FactualOverlapDetector:
         if isinstance(raw_items, list):
             for item in raw_items:
                 if isinstance(item, dict):
-                    item_type = str(item.get("type", "SECRET")).strip().upper()
+                    item_type = str(item.get("type", single_cat)).strip().upper()
                     item_val = str(item.get("value", "")).strip()
                     if item_val:
                         sensitive_items.append(SensitiveItem(type=item_type, value=item_val))
@@ -193,12 +210,15 @@ class FactualOverlapDetector:
 
         reason = str(data.get("reason", "")).strip() or "No explanation provided."
 
+        # LLM is a classifier only — decision and policy_violation are set by PolicyEngine
         return OverlapResult(
-            decision=decision,
+            decision="PENDING",
             confidence=confidence,
             severity=severity,
+            information_type=info_type,
+            category=single_cat,
             categories=categories,
             sensitive_items=sensitive_items,
             reason=reason,
-            policy_violation=raw_violation or (decision == "BLOCK"),
+            policy_violation=False,
         )

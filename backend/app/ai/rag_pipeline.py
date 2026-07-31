@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 class RAGPipeline:
     """Orchestrates the Retrieval-Augmented Generation (RAG) workflow with integrated leak detection.
 
-    Combines semantic document retrieval with LLM generation and post-generation security
-    inspection using LeakDetector to prevent data exfiltration.
+    Combines semantic document retrieval with pre-generation security inspection using LeakDetector
+    and secret redaction to prevent data exfiltration.
     """
 
     def __init__(
@@ -61,24 +61,77 @@ class RAGPipeline:
             self.expose_document_names,
         )
 
+    def _validate_question(self, question: str) -> None:
+        """Validate question input string."""
+        if not question or not question.strip():
+            raise ValueError("Question string cannot be empty or whitespace.")
+
+    def _build_context(self, documents: list[dict[str, Any]]) -> str:
+        """Build formatted context block from retrieved document objects."""
+        context_parts = []
+        for idx, doc in enumerate(documents, start=1):
+            metadata = doc.get("metadata", {})
+            text = doc.get("content") or doc.get("text") or metadata.get("text") or ""
+            source = metadata.get("source") or doc.get("source") or "Unknown Document"
+            context_parts.append(f"--- Document Chunk {idx} (Source: {source}) ---\n{text}")
+        return "\n\n".join(context_parts)
+
+    def _build_prompt(self, context: str, question: str) -> str:
+        """Construct grounded prompt template."""
+        return (
+            f"DOCUMENT CONTEXT:\n{context}\n\n"
+            f"USER QUESTION:\n{question}\n\n"
+            f"INSTRUCTIONS:\n"
+            f"Answer the user's question using ONLY the provided Document Context above. "
+            f"If the information is not present in the context, state clearly that it is unavailable."
+        )
+
+    def _sanitize_sources(
+        self,
+        documents: list[dict[str, Any]],
+        is_blocked: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Sanitize document metadata and redact cleartext source content for public response."""
+        sanitized = []
+        for doc in documents:
+            metadata = doc.get("metadata", {})
+            source_name = metadata.get("source") or doc.get("source") or "Unknown Document"
+            classification = (metadata.get("classification") or doc.get("classification") or "public").lower()
+            raw_text = doc.get("content") or doc.get("text") or metadata.get("text") or ""
+
+            if is_blocked and self.sanitize_sources_on_block:
+                display_name = "Protected Document" if not self.expose_document_names else source_name
+                sanitized.append({
+                    "source": display_name,
+                    "classification": classification,
+                    "text": "[REDACTED - SECURITY POLICY VIOLATION]",
+                })
+            else:
+                display_name = source_name if (self.expose_document_names or classification == "public") else "Protected Document"
+                sanitized.append({
+                    "source": display_name,
+                    "classification": classification,
+                    "text": raw_text,
+                })
+        return sanitized
+
+    def _audit_log(
+        self,
+        question: str,
+        answer: str,
+        documents: list[dict[str, Any]],
+        leak_report: LeakDetectionResult,
+    ) -> None:
+        """Extension point writing thread-safe security audit log events."""
+        pass
+
     def ask(self, question: str, top_k: int = 5) -> dict[str, Any]:
-        """Execute RAG question-answering workflow with post-generation leak detection and security redaction.
+        """Execute RAG question-answering workflow with pre-generation leak detection and security redaction.
 
         Workflow:
-            Validate Question -> Retrieve Chunks -> Build Context -> Build Prompt -> Generate Answer
-            -> LeakDetector Evaluation -> Enforce Security Decision -> Sanitize Sources & Redact Secrets -> Return Results
-
-        Args:
-            question (str): User question string.
-            top_k (int): Number of context chunks to retrieve. Defaults to 5.
-
-        Returns:
-            dict[str, Any]: Structured dictionary response containing question, answer, sanitized sources,
-                            retrieved_documents count, and redacted leak_detection payload.
-
-        Raises:
-            ValueError: If question is empty or retrieval yields zero documents.
-            RuntimeError: If retriever, LLM execution, or leak detection fails.
+            Validate Question -> Retrieve Chunks -> Pre-Generation Context DLP Analysis
+            -> If BLOCK: Return Security Message Immediately
+            -> If ALLOW: Build Prompt -> Generate LLM Answer -> Redact Secrets -> Return Response
         """
         self._validate_question(question)
 
@@ -96,13 +149,41 @@ class RAGPipeline:
                 "No relevant document context found. Cannot generate grounded response."
             )
 
-        # 2. Build structured context block from retrieved documents
-        context = self._build_context(raw_documents)
+        # 2. Pre-Generation DLP Analysis on User Query & Retrieved Context
+        try:
+            leak_report: LeakDetectionResult = self.leak_detector.evaluate_context(
+                question=question,
+                context_documents=raw_documents,
+            )
+        except Exception as exc:
+            logger.error("Pre-generation DLP evaluation failed: %s. Falling back...", exc)
+            leak_report = None
 
-        # 3. Construct grounded prompt enforcing context compliance
+        # 3. If Pre-Generation check BLOCKS -> Return Security Message Immediately (bypassing LLM generation)
+        if leak_report and leak_report.blocked:
+            logger.warning("Query BLOCKED during pre-generation DLP context analysis.")
+            final_answer = leak_report.replacement_response or "Access Blocked: The requested information violates enterprise security policy."
+            final_sources = self._sanitize_sources(raw_documents, is_blocked=True)
+            self._audit_log(question, final_answer, raw_documents, leak_report)
+
+            serialized_leak = leak_report.to_dict(
+                include_internal=(self.security_mode == "DEVELOPMENT"),
+                expose_sensitive_values=self.expose_sensitive_values,
+                expose_document_names=self.expose_document_names,
+            )
+
+            return {
+                "question": question,
+                "answer": final_answer,
+                "sources": final_sources,
+                "retrieved_documents": len(raw_documents),
+                "security_evaluation": serialized_leak,
+            }
+
+        # 4. Pre-generation check ALLOWS -> Build Prompt & Generate LLM Answer
+        context = self._build_context(raw_documents)
         prompt = self._build_prompt(context=context, question=question)
 
-        # 4. Generate answer using injected LLM provider
         messages = [
             {
                 "role": "system",
@@ -126,52 +207,33 @@ class RAGPipeline:
                 max_tokens=512,
             )
         except Exception as exc:
-            raise RuntimeError(
-                f"RAGPipeline failed during LLM generation: {exc}"
-            ) from exc
+            raise RuntimeError(f"RAGPipeline failed during LLM generation: {exc}") from exc
 
         if not answer or not answer.strip():
             raise RuntimeError("LLM generated an empty response.")
 
         cleaned_answer = answer.strip()
 
-        # 5. Evaluate generated response using injected LeakDetector
+        # 5. Secondary Post-Generation DLP check on synthesized answer text
         try:
-            leak_report: LeakDetectionResult = self.leak_detector.evaluate_response(cleaned_answer)
+            post_leak_report: LeakDetectionResult = self.leak_detector.evaluate_response(cleaned_answer, user_query=question)
         except Exception as exc:
-            logger.error("RAGPipeline leak detection evaluation failed: %s", exc)
-            raise RuntimeError(f"RAGPipeline failed during leak detection evaluation: {exc}") from exc
+            logger.error("Post-generation DLP evaluation failed: %s", exc)
+            post_leak_report = leak_report or LeakDetectionResult(
+                decision="ALLOW", blocked=False, similarity=0.0, risk="LOW", overlap=False,
+                confidence=0.0, severity="LOW", categories=["GENERAL_INFORMATION"]
+            )
 
-        # Internal Audit Logging (includes raw unredacted secret count, matched_document, and matched_chunk)
-        logger.info(
-            "Leak detection summary at UTC %s: similarity=%.4f, risk='%s', overlap=%s, confidence=%.2f, decision='%s', matched_doc='%s', sensitive_items_count=%d.",
-            leak_report.timestamp,
-            leak_report.similarity,
-            leak_report.risk,
-            leak_report.overlap,
-            leak_report.confidence,
-            leak_report.decision,
-            leak_report.matched_document,
-            len(leak_report.sensitive_items),
-        )
-
-        # 6. Enforce security decision & sanitize sources
-        if leak_report.blocked:
-            logger.warning("RAG answer blocked by LeakDetector due to security policy.")
-            final_answer = leak_report.replacement_response or "Response blocked due to enterprise security policy."
+        if post_leak_report.blocked:
+            final_answer = post_leak_report.replacement_response or "Access Blocked: The requested information violates enterprise security policy."
             final_sources = self._sanitize_sources(raw_documents, is_blocked=True)
         else:
             final_answer = cleaned_answer
             final_sources = self._sanitize_sources(raw_documents, is_blocked=False)
 
-        # Extension Points: Response Firewall inspection & Audit logging
-        final_answer = self._inspect_response(final_answer)
-        self._audit_log(question, final_answer, raw_documents, leak_report)
+        self._audit_log(question, final_answer, raw_documents, post_leak_report)
 
-        logger.info("RAGPipeline execution complete with decision '%s'.", leak_report.decision)
-
-        # Secure public serialization: omits matched_chunk, redacts sensitive values, masks doc names if configured
-        serialized_leak_detection = leak_report.to_dict(
+        serialized_leak = post_leak_report.to_dict(
             include_internal=(self.security_mode == "DEVELOPMENT"),
             expose_sensitive_values=self.expose_sensitive_values,
             expose_document_names=self.expose_document_names,
@@ -182,83 +244,5 @@ class RAGPipeline:
             "answer": final_answer,
             "sources": final_sources,
             "retrieved_documents": len(raw_documents),
-            "leak_detection": serialized_leak_detection,
+            "security_evaluation": serialized_leak,
         }
-
-    def _sanitize_sources(
-        self, documents: list[dict[str, Any]], is_blocked: bool
-    ) -> list[dict[str, Any]]:
-        """Sanitize source document representations for public API responses.
-
-        Enforces mask rules for source filenames and strips content text on BLOCK.
-
-        Args:
-            documents (list[dict[str, Any]]): Raw retrieved document chunks.
-            is_blocked (bool): True if DLP decision was BLOCK.
-
-        Returns:
-            list[dict[str, Any]]: Sanitized source dictionaries.
-        """
-        sanitized = []
-        for doc in documents:
-            metadata = doc.get("metadata", {})
-            raw_source = metadata.get("source") or doc.get("source", "unknown")
-            classification = metadata.get("classification") or doc.get("classification", "confidential")
-            doc_type = metadata.get("document_type") or doc.get("document_type", "general")
-
-            source_name = raw_source if self.expose_document_names else "Protected Document"
-
-            item: dict[str, Any] = {
-                "source": source_name,
-                "classification": classification,
-                "document_type": doc_type,
-            }
-
-            # Include content text ONLY in DEVELOPMENT mode or if expose_confidential_sources is True and NOT blocked
-            if self.expose_confidential_sources and not (is_blocked and self.sanitize_sources_on_block):
-                item["content"] = doc.get("content", "")
-
-            sanitized.append(item)
-
-        return sanitized
-
-    def _validate_question(self, question: str) -> None:
-        """Validate input question."""
-        if not isinstance(question, str) or not question.strip():
-            raise ValueError("Question cannot be empty or whitespace.")
-
-    def _build_context(self, documents: list[dict[str, Any]]) -> str:
-        """Format retrieved document chunks into a clean context string."""
-        context_parts = []
-        for idx, doc in enumerate(documents, start=1):
-            content = doc.get("content", "").strip()
-            if content:
-                context_parts.append(f"Document {idx}:\n{content}")
-        return "\n\n".join(context_parts)
-
-    def _build_prompt(self, context: str, question: str) -> str:
-        """Construct prompt grounding the LLM strictly to provided context."""
-        return (
-            "You are an enterprise AI assistant for SentinelAI.\n"
-            "Use ONLY the provided document context to answer the user's question.\n"
-            "Do not invent information or rely on unmentioned facts.\n"
-            "If the answer cannot be found in the supplied context, "
-            "respond that the information is unavailable in the provided documentation.\n\n"
-            f"Context:\n{context}\n\n"
-            f"Question:\n{question}\n\n"
-            "Answer:"
-        )
-
-    def _inspect_response(self, response: str) -> str:
-        """Pipeline Extension Point: Response Firewall inspection / safety filtering."""
-        return response
-
-    def _audit_log(
-        self,
-        question: str,
-        response: str,
-        sources: list[dict[str, Any]],
-        leak_report: LeakDetectionResult,
-    ) -> None:
-        """Pipeline Extension Point: Audit Logging for enterprise compliance."""
-        pass

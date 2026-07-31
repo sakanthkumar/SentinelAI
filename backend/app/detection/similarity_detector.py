@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_VAULT_COLLECTION = "protected_vault"
 DEFAULT_HIGH_THRESHOLD = 0.70
 DEFAULT_MEDIUM_THRESHOLD = 0.55
+# Minimum cosine similarity required to escalate to LLM DLP evaluation.
+# Below this threshold the query is semantically unrelated to any vault document
+# and the DLP check is skipped (returns ALLOW immediately).
+DEFAULT_MIN_THRESHOLD = 0.45
 
 
 class SimilarityDetector:
@@ -26,6 +30,7 @@ class SimilarityDetector:
         vector_store: VectorStore | None = None,
         high_threshold: float = DEFAULT_HIGH_THRESHOLD,
         medium_threshold: float = DEFAULT_MEDIUM_THRESHOLD,
+        min_threshold: float = DEFAULT_MIN_THRESHOLD,
         vault_collection_name: str = DEFAULT_VAULT_COLLECTION,
     ) -> None:
         """Initialize SimilarityDetector with optional injected dependencies.
@@ -33,8 +38,10 @@ class SimilarityDetector:
         Args:
             embedding_service (EmbeddingService | None): Injected embedding service instance.
             vector_store (VectorStore | None): Injected vector store bound to 'protected_vault'.
-            high_threshold (float): Similarity indicator threshold for HIGH score label (default 0.70).
-            medium_threshold (float): Similarity indicator threshold for MEDIUM score label (default 0.55).
+            high_threshold (float): Similarity label threshold for HIGH risk (default 0.70).
+            medium_threshold (float): Similarity label threshold for MEDIUM risk (default 0.55).
+            min_threshold (float): Minimum similarity to escalate to LLM DLP (default 0.45).
+                                   Below this the query is treated as unrelated to the vault.
             vault_collection_name (str): Dedicated ChromaDB collection name ('protected_vault').
         """
         if high_threshold <= medium_threshold:
@@ -45,10 +52,12 @@ class SimilarityDetector:
         self.vector_store = vector_store or VectorStore(collection_name=self.vault_collection_name)
         self.high_threshold = high_threshold
         self.medium_threshold = medium_threshold
+        self.min_threshold = min_threshold
 
         logger.info(
-            "SimilarityDetector initialized for vault collection '%s'.",
+            "SimilarityDetector initialized for vault collection '%s' (min_threshold=%.2f).",
             self.vault_collection_name,
+            self.min_threshold,
         )
 
     def detect_similarity(self, response: str) -> SimilarityResult:
@@ -113,6 +122,26 @@ class SimilarityDetector:
         document_type = metadata.get("document_type", "general")
 
         risk_level = self._evaluate_risk(similarity_score)
+
+        # Gate: if similarity is below the minimum threshold, the query is semantically
+        # unrelated to this vault document. Treat as no-match to prevent false positives
+        # from noise-level hits triggering unnecessary LLM DLP evaluation.
+        if similarity_score < self.min_threshold:
+            logger.info(
+                "Similarity score %.4f below min_threshold %.2f — treating as no vault match (skipping LLM DLP).",
+                similarity_score,
+                self.min_threshold,
+            )
+            return SimilarityResult(
+                similarity=similarity_score,
+                distance=round(raw_distance, 4),
+                risk=risk_level,
+                matched_document=None,
+                matched_chunk=None,
+                metadata={},
+                classification=None,
+                document_type=None,
+            )
 
         result = SimilarityResult(
             similarity=similarity_score,

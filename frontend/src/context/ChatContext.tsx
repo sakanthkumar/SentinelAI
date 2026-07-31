@@ -39,43 +39,48 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await chatApi.sendQuestion(questionText.trim());
 
       const assistantMsgId = `assistant-${Date.now()}`;
-      const isBlocked = response.leak_detection.decision === "BLOCK";
+      const isBlocked = response?.leak_detection?.decision === "BLOCK" || response?.leak_detection?.blocked === true;
 
       const assistantMessage: ChatMessage = {
         id: assistantMsgId,
         sender: "assistant",
         text: isBlocked
           ? "🚫 Response blocked due to enterprise security policy."
-          : response.answer,
+          : response?.answer || "No answer returned.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        leakDetection: response.leak_detection,
-        sources: response.sources,
+        leakDetection: response?.leak_detection || undefined,
+        sources: response?.sources || [],
         isBlocked: isBlocked,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-      setActiveDlpReport(response.leak_detection);
+      if (response?.leak_detection) {
+        setActiveDlpReport(response.leak_detection);
+      }
 
       // Save event to local storage for real audit history
-      const newEvent: SecurityEvent = {
-        id: `evt-${Date.now()}`,
-        timestamp: response.leak_detection.timestamp || new Date().toISOString(),
-        question: questionText.trim(),
-        decision: response.leak_detection.decision,
-        severity: response.leak_detection.severity,
-        categories: response.leak_detection.categories,
-        matchedDocument: response.leak_detection.matched_document || undefined,
-        reason: response.leak_detection.reason,
-        policyViolation: response.leak_detection.policy_violation,
-        confidence: response.leak_detection.confidence,
-      };
+      if (response?.leak_detection) {
+        const newEvent: SecurityEvent = {
+          id: `evt-${Date.now()}`,
+          timestamp: response.leak_detection.timestamp || new Date().toISOString(),
+          question: questionText.trim(),
+          decision: response.leak_detection.decision || "ALLOW",
+          severity: response.leak_detection.severity || "LOW",
+          categories: Array.isArray(response.leak_detection.categories) ? response.leak_detection.categories : ["GENERAL_INFORMATION"],
+          matchedDocument: response.leak_detection.matched_document || undefined,
+          reason: response.leak_detection.reason || "",
+          policyViolation: Boolean(response.leak_detection.policy_violation),
+          confidence: response.leak_detection.confidence || 0,
+        };
 
-      try {
-        const stored = localStorage.getItem("sentinel_security_events");
-        const existingEvents = stored ? JSON.parse(stored) : [];
-        localStorage.setItem("sentinel_security_events", JSON.stringify([newEvent, ...existingEvents]));
-      } catch {
-        // localStorage fallback
+        try {
+          const stored = localStorage.getItem("sentinel_security_events");
+          const existingEvents = stored ? JSON.parse(stored) : [];
+          const validEvents = Array.isArray(existingEvents) ? existingEvents : [];
+          localStorage.setItem("sentinel_security_events", JSON.stringify([newEvent, ...validEvents]));
+        } catch {
+          // localStorage fallback
+        }
       }
 
     } catch (err: any) {

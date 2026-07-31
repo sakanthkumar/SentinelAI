@@ -174,24 +174,34 @@ class PromptTemplateLoader:
     ) -> str:
         """Render system prompt template with injected context variables."""
         template = self.load_system_prompt_template()
-        return template.format(
-            classification=classification,
-            sensitivity=sensitivity,
-            document_type=document_type,
-            source=source,
-            enterprise_policy=enterprise_policy,
-        )
+        replacements = {
+            "{classification}": classification,
+            "{sensitivity}": sensitivity,
+            "{document_type}": document_type,
+            "{source}": source,
+            "{enterprise_policy}": enterprise_policy,
+        }
+        res = template
+        for k, v in replacements.items():
+            res = res.replace(k, str(v))
+        return res
 
     def render_user_prompt(
         self,
         matched_chunk: str,
         response: str,
         sensitivity: str,
+        user_query: str = "General inquiry",
     ) -> str:
         """Render user prompt template with injected context variables."""
         template = self.load_user_prompt_template()
-        return template.format(
-            matched_chunk=matched_chunk,
-            response=response,
-            sensitivity=sensitivity,
-        )
+        replacements = {
+            "{user_query}": user_query,
+            "{matched_chunk}": matched_chunk,
+            "{response}": response,
+            "{sensitivity}": sensitivity,
+        }
+        res = template
+        for k, v in replacements.items():
+            res = res.replace(k, str(v))
+        return res

@@ -20,6 +20,7 @@ blocked_categories:
 
 allowed_categories:
   - GENERAL_INFORMATION
+  - HR_POLICY
   - SECURITY_POLICY
   - OTHER
 

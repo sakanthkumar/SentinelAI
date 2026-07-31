@@ -57,6 +57,8 @@ class OverlapResult:
     decision: str  # "ALLOW" or "BLOCK"
     confidence: float
     severity: str  # "LOW", "MEDIUM", "HIGH", "CRITICAL"
+    information_type: str = ""
+    category: str = "OTHER"
     categories: list[str] = field(default_factory=list)
     sensitive_items: list[SensitiveItem] = field(default_factory=list)
     reason: str = ""
@@ -64,8 +66,11 @@ class OverlapResult:
 
     @property
     def overlap(self) -> bool:
-        """Helper property indicating if factual overlap / leak occurred."""
-        return self.decision == "BLOCK" or self.policy_violation
+        """Helper property indicating if a policy violation was detected.
+
+        Derived from PolicyEngine evaluation, not from LLM classification.
+        """
+        return self.policy_violation
 
     def to_dict(self, redact_sensitive_items: bool = False) -> dict[str, Any]:
         """Convert result dataclass to dictionary."""
@@ -73,6 +78,8 @@ class OverlapResult:
             "decision": self.decision,
             "confidence": self.confidence,
             "severity": self.severity,
+            "information_type": self.information_type,
+            "category": self.category,
             "categories": self.categories,
             "sensitive_items": [item.to_dict(redact=redact_sensitive_items) for item in self.sensitive_items],
             "reason": self.reason,

@@ -129,7 +129,7 @@ def chat_query(
             top_k=request.top_k,
         )
 
-        leak_det = pipeline_output.get("leak_detection", {})
+        leak_det = pipeline_output.get("security_evaluation", {})
         
         # Automatically record audit log event
         try:

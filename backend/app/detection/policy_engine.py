@@ -36,7 +36,7 @@ class PolicyEngine:
         blocked_str = ", ".join(sorted(self.blocked_categories))
         return (
             f"Blocked Sensitive Categories: [{blocked_str}]\n"
-            f"Allowed General Categories: [GENERAL_INFORMATION, SECURITY_POLICY, OTHER]\n"
+            f"Allowed General Categories: [GENERAL_INFORMATION, HR_POLICY, SECURITY_POLICY, OTHER]\n"
             f"Strictness Threshold: Confidence >= {self.confidence_threshold:.2f} requires blocking blocked categories."
         )
 
@@ -45,35 +45,40 @@ class PolicyEngine:
         overlap_result: OverlapResult,
         sensitivity: str = "CONFIDENTIAL",
     ) -> dict[str, Any]:
-        """Evaluate LLM overlap analysis against enterprise security policy rules.
+        """Evaluate LLM semantic classification against enterprise security policy rules.
+
+        The LLM provides ONLY the information category and confidence.
+        This engine is the SOLE decision-maker for ALLOW or BLOCK.
+
+        Decision logic:
+            1. If the classified category is in blocked_categories AND confidence >= threshold → BLOCK.
+            2. If the document sensitivity is SECRET and category is blocked → BLOCK (regardless of confidence).
+            3. Otherwise → ALLOW.
 
         Args:
-            overlap_result (OverlapResult): Raw DLP analysis from FactualOverlapDetector.
-            sensitivity (str): Sensitivity level of matched document ('PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED', 'SECRET').
+            overlap_result (OverlapResult): Semantic classification from FactualOverlapDetector.
+            sensitivity (str): Sensitivity level of matched document.
 
         Returns:
             dict[str, Any]: Policy enforcement result with decision, blocked, severity, and replacement_response.
         """
         sensitivity_upper = sensitivity.upper() if sensitivity else "CONFIDENTIAL"
-        level_info = self.security_levels.get(sensitivity_upper, {"strictness": "HIGH", "default_policy": "EVALUATE"})
 
         # Check for blocked category matches
         matching_blocked_categories = [
             cat for cat in overlap_result.categories if cat in self.blocked_categories
         ]
 
-        # Determine policy violation & blocking decision
-        is_policy_violation = (
-            overlap_result.policy_violation
-            or bool(matching_blocked_categories)
-            or (overlap_result.overlap and overlap_result.decision == "BLOCK")
-            or (sensitivity_upper == "SECRET" and overlap_result.overlap)
-        )
+        # Determine policy violation: ONLY based on category + confidence + sensitivity
+        is_policy_violation = bool(matching_blocked_categories)
 
         should_block = (
             is_policy_violation
             and overlap_result.confidence >= self.confidence_threshold
-        ) or (sensitivity_upper == "SECRET" and overlap_result.overlap)
+        ) or (
+            sensitivity_upper == "SECRET"
+            and is_policy_violation
+        )
 
         # Calculate final severity rating
         if should_block:
@@ -89,11 +94,16 @@ class PolicyEngine:
         decision = "BLOCK" if should_block else "ALLOW"
         replacement_message = self.default_replacement_message if should_block else None
 
+        # Update the overlap_result with PolicyEngine's decision
+        overlap_result.decision = decision
+        overlap_result.policy_violation = is_policy_violation and should_block
+
         logger.info(
-            "PolicyEngine evaluation complete: decision='%s', sensitivity='%s', matching_blocked=%s, severity='%s'.",
+            "PolicyEngine evaluation complete: decision='%s', sensitivity='%s', matching_blocked=%s, confidence=%.2f, severity='%s'.",
             decision,
             sensitivity_upper,
             matching_blocked_categories,
+            overlap_result.confidence,
             final_severity,
         )
 
@@ -101,6 +111,6 @@ class PolicyEngine:
             "decision": decision,
             "blocked": should_block,
             "severity": final_severity,
-            "policy_violation": is_policy_violation,
+            "policy_violation": is_policy_violation and should_block,
             "replacement_response": replacement_message,
         }
