@@ -48,8 +48,8 @@ class SystemHealthResponse(BaseModel):
     overall_status: str = Field("Healthy", example="Healthy", description="Overall platform operational status")
 
 
-def _get_documents_list() -> list[DocumentDetail]:
-    """Helper scanning Documents directory for actual files."""
+def _fallback_documents_list_filesystem() -> list[DocumentDetail]:
+    """Helper scanning Documents directory for actual files as a fallback."""
     base_dir = Path(__file__).resolve().parents[2]
     docs_dir = base_dir / "Documents"
     if not docs_dir.exists():
@@ -59,7 +59,6 @@ def _get_documents_list() -> list[DocumentDetail]:
     if not docs_dir.exists():
         return results
 
-    # Scan public folder
     pub_dir = docs_dir / "public"
     if pub_dir.exists():
         for f in pub_dir.rglob("*"):
@@ -74,7 +73,6 @@ def _get_documents_list() -> list[DocumentDetail]:
                     )
                 )
 
-    # Scan confidential folder
     conf_dir = docs_dir / "confidential"
     if conf_dir.exists():
         for f in conf_dir.rglob("*"):
@@ -92,6 +90,93 @@ def _get_documents_list() -> list[DocumentDetail]:
     return results
 
 
+def _get_documents_list(request: Request | None = None) -> list[DocumentDetail]:
+    """Retrieve actual indexed documents from ChromaDB collections ('enterprise_docs' and 'protected_vault')."""
+    vector_store = None
+    protected_vault = None
+
+    if request and hasattr(request, "app") and hasattr(request.app, "state"):
+        vector_store = getattr(request.app.state, "vector_store", None)
+        protected_vault = getattr(request.app.state, "protected_vault", None)
+
+    if vector_store is None:
+        try:
+            vector_store = VectorStore(collection_name="enterprise_docs")
+        except Exception:
+            pass
+
+    if protected_vault is None:
+        try:
+            protected_vault = VectorStore(collection_name="protected_vault")
+        except Exception:
+            pass
+
+    doc_map: dict[str, dict[str, Any]] = {}
+
+    # Query enterprise_docs collection
+    if vector_store and hasattr(vector_store, "_collection"):
+        try:
+            res = vector_store._collection.get(include=["metadatas"])
+            metadatas = res.get("metadatas") or []
+            for meta in metadatas:
+                if not meta:
+                    continue
+                source = meta.get("source") or "unknown_document"
+                classification = meta.get("classification") or "public"
+                file_path = meta.get("file_path") or f"Documents/{classification}/{source}"
+
+                if source not in doc_map:
+                    rel_source = file_path if file_path.startswith("Documents/") else f"Documents/{classification}/{source}"
+                    doc_map[source] = {
+                        "name": source,
+                        "classification": classification,
+                        "indexed": True,
+                        "source": rel_source,
+                        "chunks": 0,
+                    }
+                doc_map[source]["chunks"] += 1
+        except Exception as exc:
+            logger.error("Failed to fetch metadatas from enterprise_docs: %s", exc)
+
+    # Query protected_vault collection
+    if protected_vault and hasattr(protected_vault, "_collection"):
+        try:
+            res = protected_vault._collection.get(include=["metadatas"])
+            metadatas = res.get("metadatas") or []
+            for meta in metadatas:
+                if not meta:
+                    continue
+                source = meta.get("source") or "unknown_document"
+                file_path = meta.get("file_path") or f"Documents/confidential/{source}"
+
+                if source not in doc_map:
+                    rel_source = file_path if file_path.startswith("Documents/") else f"Documents/confidential/{source}"
+                    doc_map[source] = {
+                        "name": source,
+                        "classification": "confidential",
+                        "indexed": True,
+                        "source": rel_source,
+                        "chunks": 0,
+                    }
+                doc_map[source]["classification"] = "confidential"
+        except Exception as exc:
+            logger.error("Failed to fetch metadatas from protected_vault: %s", exc)
+
+    if not doc_map:
+        return _fallback_documents_list_filesystem()
+
+    return [
+        DocumentDetail(
+            name=d["name"],
+            classification=d["classification"],
+            indexed=d["indexed"],
+            source=d["source"],
+            chunks=d["chunks"],
+        )
+        for d in doc_map.values()
+    ]
+
+
 @router.get(
     "/stats",
     response_model=DashboardStatsResponse,
@@ -103,19 +188,34 @@ async def get_dashboard_stats(request: Request) -> DashboardStatsResponse:
     """Return real metrics computed from system state and vector store."""
     logger.info("Received request for dashboard statistics")
 
-    docs = _get_documents_list()
+    docs = _get_documents_list(request)
     total_docs = len(docs)
     pub_docs = len([d for d in docs if d.classification == "public"])
     conf_docs = len([d for d in docs if d.classification == "confidential"])
 
-    protected_chunks = 0
+    total_vector_chunks = sum(d.chunks for d in docs)
+    protected_chunks = total_vector_chunks
+
     try:
         protected_vault = getattr(request.app.state, "protected_vault", None)
         if protected_vault is None:
             protected_vault = VectorStore(collection_name="protected_vault")
-        chunk_count = protected_vault._collection.count()
-        if chunk_count > 0:
-            protected_chunks = chunk_count
+        vault_count = protected_vault._collection.count()
+        if vault_count > 0:
+            protected_chunks = vault_count
+        elif total_vector_chunks > 0:
+            protected_chunks = total_vector_chunks
+    except Exception:
+        pass
+
+    blocked_count = 0
+    allowed_count = 0
+    try:
+        audit_logger = getattr(request.app.state, "audit_logger", None)
+        if audit_logger:
+            audit_stats = audit_logger.get_stats()
+            blocked_count = audit_stats.get("blocked_requests", 0)
+            allowed_count = audit_stats.get("allowed_requests", 0)
     except Exception:
         pass
 
@@ -126,8 +226,8 @@ async def get_dashboard_stats(request: Request) -> DashboardStatsResponse:
         protected_documents=conf_docs,
         protected_chunks=protected_chunks,
         vault_health="Healthy",
-        blocked_requests=0,
-        allowed_requests=0,
+        blocked_requests=blocked_count,
+        allowed_requests=allowed_count,
     )
 
 
@@ -138,10 +238,40 @@ async def get_dashboard_stats(request: Request) -> DashboardStatsResponse:
     summary="Get Protected Documents List",
     description="Retrieve list of documents indexed in public or confidential vector store.",
 )
-async def get_dashboard_documents() -> list[DocumentDetail]:
-    """Return list of actual documents in knowledge base directory."""
+async def get_dashboard_documents(request: Request) -> list[DocumentDetail]:
+    """Return list of actual documents from ChromaDB vector store."""
     logger.info("Received request for dashboard documents list")
-    return _get_documents_list()
+    return _get_documents_list(request)
+
+
+@router.get(
+    "/events",
+    response_model=list[dict[str, Any]],
+    status_code=status.HTTP_200_OK,
+    summary="Get Security Audit Events",
+    description="Retrieve live security evaluation audit events from persistent backend audit log.",
+)
+async def get_dashboard_events(
+    request: Request,
+    limit: int = 50,
+    decision: str | None = None,
+    severity: str | None = None,
+    search: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return filtered security audit events log."""
+    logger.info("Received request for security audit events")
+    try:
+        audit_logger = getattr(request.app.state, "audit_logger", None)
+        if audit_logger:
+            return audit_logger.get_events(
+                limit=limit,
+                decision=decision,
+                severity=severity,
+                search_query=search,
+            )
+    except Exception as exc:
+        logger.error("Failed to retrieve audit events: %s", exc)
+    return []
 
 
 @router.get(

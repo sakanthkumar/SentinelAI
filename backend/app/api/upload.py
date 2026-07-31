@@ -118,6 +118,15 @@ async def upload_document(
             detail="Uploaded file is empty. Please provide a valid document with content.",
         )
 
+    # 2b. Enforce 20MB payload size limit
+    max_bytes = 20 * 1024 * 1024
+    if len(content) > max_bytes:
+        logger.warning("Rejected upload for file '%s': size (%d bytes) exceeds 20MB limit", filename, len(content))
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="File size exceeds maximum allowed upload limit of 20MB.",
+        )
+
     # 3. Save temporarily inside configured classification subdirectory
     uploads_dir = Path(settings.upload_folder) / clean_classification
     uploads_dir.mkdir(parents=True, exist_ok=True)

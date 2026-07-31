@@ -57,44 +57,51 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             vector_store=vector_store,
         )
 
-        # 4. LLMFactory -> BaseLLM
-        llm = LLMFactory.get_provider()
+        # 4. Protected Vault & LLM Provider
         protected_vault = VectorStore(collection_name="protected_vault")
+        llm = LLMFactory.get_provider()
         
-        # 5. Shared SimilarityDetector
+        # 5. Shared SimilarityDetector using cached protected_vault
         similarity_detector = SimilarityDetector(
             embedding_service=embedding_service,
-            vector_store=VectorStore(collection_name="protected_vault"),
+            vector_store=protected_vault,
         )
 
         # 6. LeakDetector
         leak_detector = LeakDetector(
             similarity_detector=similarity_detector,
-)
+        )
 
-        # 6. RAGPipeline with injected LeakDetector
+        # 7. RAGPipeline with injected LeakDetector
         rag_pipeline = RAGPipeline(
             retriever=retriever,
             llm=llm,
             leak_detector=leak_detector,
         )
 
-        # 7. IngestionService
+        # 8. IngestionService
         ingestion_service = IngestionService(
             loader=DocumentLoader(),
             chunker=TextChunker(),
             embedding_service=embedding_service,
             vector_store=vector_store,
+            protected_vault=protected_vault,
         )
+
+        # 9. SecurityAuditLogger
+        from app.services.audit_logger import SecurityAuditLogger
+        audit_logger = SecurityAuditLogger()
 
         # Store singletons in application state for dependency injection across requests
         app.state.embedding_service = embedding_service
         app.state.vector_store = vector_store
+        app.state.protected_vault = protected_vault
         app.state.retriever = retriever
         app.state.llm = llm
         app.state.leak_detector = leak_detector
         app.state.rag_pipeline = rag_pipeline
         app.state.ingestion_service = ingestion_service
+        app.state.audit_logger = audit_logger
 
         logger.info("SentinelAI core services initialized successfully.")
 

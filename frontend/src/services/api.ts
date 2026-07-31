@@ -105,6 +105,19 @@ export const dashboardApi = {
     });
     return handleResponse<SystemHealthResponse>(response);
   },
+
+  async getEvents(search?: string, decision?: string, severity?: string): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (search) params.append("search", search);
+    if (decision && decision !== "ALL") params.append("decision", decision);
+    if (severity && severity !== "ALL") params.append("severity", severity);
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+
+    const response = await fetch(`${BASE_URL}/api/dashboard/events${queryString}`, {
+      method: "GET",
+    });
+    return handleResponse<any[]>(response);
+  },
 };
 
 export const healthApi = {

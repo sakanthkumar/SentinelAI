@@ -91,6 +91,7 @@ class ChatResponse(BaseModel):
 )
 async def chat_query(
     request: ChatRequest,
+    http_request: Request,
     rag_pipeline: RAGPipeline = Depends(get_rag_pipeline),
 ) -> ChatResponse:
     """Orchestrate chat query execution using existing RAGPipeline."""
@@ -104,7 +105,16 @@ async def chat_query(
             detail="Question cannot be empty or whitespace.",
         )
 
-    # 2. Validate top_k > 0
+    # 2. Validate question length limit (4000 chars max)
+    clean_question = request.question.strip()
+    if len(clean_question) > 4000:
+        logger.warning("Rejected chat query: question length (%d chars) exceeds 4000 limit", len(clean_question))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question prompt length exceeds maximum allowed limit of 4000 characters.",
+        )
+
+    # 3. Validate top_k > 0
     if request.top_k <= 0:
         logger.warning("Rejected chat query: top_k (%d) must be > 0", request.top_k)
         raise HTTPException(
@@ -112,22 +122,39 @@ async def chat_query(
             detail="top_k must be a positive integer greater than 0.",
         )
 
-    clean_question = request.question.strip()
-
-    # 3. Call existing RAGPipeline.ask()
+    # 4. Call existing RAGPipeline.ask()
     try:
         pipeline_output: dict[str, Any] = rag_pipeline.ask(
             question=clean_question,
             top_k=request.top_k,
         )
 
-        # 4. Return pipeline response formatted according to response contract
+        leak_det = pipeline_output.get("leak_detection", {})
+        
+        # Automatically record audit log event
+        try:
+            audit_logger = getattr(http_request.app.state, "audit_logger", None)
+            if audit_logger:
+                audit_logger.log_event(
+                    question=clean_question,
+                    decision=leak_det.get("decision", "ALLOW"),
+                    severity=leak_det.get("severity", "LOW"),
+                    categories=leak_det.get("categories", ["GENERAL_INFORMATION"]),
+                    reason=leak_det.get("reason", "Query processed successfully."),
+                    matched_document=leak_det.get("matched_document"),
+                    confidence=leak_det.get("confidence", 0.0),
+                    policy_violation=leak_det.get("policy_violation", False),
+                )
+        except Exception as audit_exc:
+            logger.error("Failed to log audit event: %s", audit_exc)
+
+        # 5. Return pipeline response formatted according to response contract
         return ChatResponse(
             question=pipeline_output.get("question", clean_question),
             answer=pipeline_output.get("answer", ""),
             sources=pipeline_output.get("sources", []),
             retrieved_documents=pipeline_output.get("retrieved_documents", 0),
-            leak_detection=pipeline_output.get("leak_detection", {}),
+            leak_detection=leak_det,
         )
 
     except ValueError as exc:

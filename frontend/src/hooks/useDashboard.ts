@@ -38,20 +38,15 @@ export function useDashboard() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const fetchDashboardData = useCallback(async () => {
-    // Read actual audit logs from local storage for real Blocked/Allowed metrics & recent activity
-    let realEvents: SecurityEvent[] = [];
+    let localEvents: SecurityEvent[] = [];
     try {
       const stored = localStorage.getItem("sentinel_security_events");
       if (stored) {
-        realEvents = JSON.parse(stored);
+        localEvents = JSON.parse(stored);
       }
     } catch {
       // fallback
     }
-
-    const realBlocked = realEvents.filter((e) => e.decision === "BLOCK").length;
-    const realAllowed = realEvents.filter((e) => e.decision === "ALLOW").length;
-    setRecentEvents(realEvents.slice(0, 5));
 
     try {
       const healthRes = await healthApi.getHealth();
@@ -59,18 +54,33 @@ export function useDashboard() {
         setBackendStatus("connected");
       }
 
-      const [statsRes, docsRes, healthCompRes] = await Promise.all([
+      const [statsRes, docsRes, healthCompRes, eventsRes] = await Promise.all([
         dashboardApi.getStats(),
         dashboardApi.getDocuments(),
         dashboardApi.getSystemHealth(),
+        dashboardApi.getEvents().catch(() => []),
       ]);
+
+      // Merge backend & local security events
+      const eventMap = new Map<string, SecurityEvent>();
+      (eventsRes || []).forEach((e) => eventMap.set(e.id, e));
+      localEvents.forEach((e) => {
+        if (!eventMap.has(e.id)) eventMap.set(e.id, e);
+      });
+      const allEvents = Array.from(eventMap.values()).sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      setRecentEvents(allEvents.slice(0, 5));
+
+      const totalBlocked = statsRes.blocked_requests > 0 ? statsRes.blocked_requests : allEvents.filter((e) => e.decision === "BLOCK").length;
+      const totalAllowed = statsRes.allowed_requests > 0 ? statsRes.allowed_requests : allEvents.filter((e) => e.decision === "ALLOW").length;
 
       setStats({
         totalDocuments: statsRes.total_documents,
         protectedDocuments: statsRes.protected_documents,
         publicDocuments: statsRes.public_documents,
-        blockedRequests: realBlocked,
-        allowedRequests: realAllowed,
+        blockedRequests: totalBlocked,
+        allowedRequests: totalAllowed,
         protectedChunks: statsRes.protected_chunks,
         vaultHealth: statsRes.vault_health,
       });
