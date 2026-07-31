@@ -9,8 +9,6 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-0.4+-FF6F61?style=for-the-badge&logo=database&logoColor=white)](https://www.trychroma.com/)
 [![Groq](https://img.shields.io/badge/Groq-Llama_3.3_70B-f05032?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/SentinelAI?style=for-the-badge)](https://github.com/yourusername/SentinelAI/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/yourusername/SentinelAI?style=for-the-badge)](https://github.com/yourusername/SentinelAI/network/members)
 
 > **SentinelAI** is an enterprise-grade Semantic Data Loss Prevention (Semantic DLP) and Retrieval-Augmented Generation (RAG) defense platform. It combines vector similarity filtering, LLM factual overlap evaluation, and zero-trust policy enforcement to prevent confidential data exfiltration through AI model interactions.
 
