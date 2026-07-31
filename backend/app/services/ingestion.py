@@ -81,7 +81,7 @@ class IngestionService:
         parts = re.split(r"[_\-\s]+", stem_lower)
         return parts[0] if parts and parts[0] else "general"
 
-    def ingest(self, file_path: str | Path) -> dict[str, Any]:
+    def ingest(self, file_path: str | Path, classification: str | None = None) -> dict[str, Any]:
         """Ingest a file into the vector database with automated classification, document typing, and deduplication.
 
         Workflow:
@@ -90,6 +90,7 @@ class IngestionService:
 
         Args:
             file_path (str | Path): Path to document file (PDF, DOCX).
+            classification (str | None): Optional explicit security classification ('public' or 'confidential').
 
         Returns:
             dict[str, Any]: Ingestion statistics including status, chunk count, collection name, classification, and document_type.
@@ -105,8 +106,12 @@ class IngestionService:
         if not path.exists():
             raise FileNotFoundError(f"Target ingestion document not found at path: '{path}'")
 
-        # 1. Automatically infer document classification and type from file path
-        classification = self._determine_classification(path)
+        # 1. Infer classification if not provided explicitly
+        if not classification:
+            classification = self._determine_classification(path)
+        else:
+            classification = classification.strip().lower()
+
         document_type = self._determine_document_type(path)
         logger.info(
             "Classified document '%s' as classification='%s', document_type='%s'.",

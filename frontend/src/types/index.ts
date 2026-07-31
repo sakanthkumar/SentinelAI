@@ -54,21 +54,7 @@ export interface UploadResponse {
   collection: string;
 }
 
-export interface FailureDetail {
-  file: string;
-  reason: string;
-}
 
-export interface BulkIngestResponse {
-  status: string;
-  documents_processed: number;
-  public_documents: number;
-  confidential_documents: number;
-  total_chunks: number;
-  failed_documents: number;
-  failures: FailureDetail[];
-  processing_time_seconds: number;
-}
 
 export interface HealthResponse {
   status: string;

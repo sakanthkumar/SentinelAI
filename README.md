@@ -282,42 +282,40 @@ Every interaction generates an auditable `LeakDetectionResult` payload recorded 
 
 ### 2. Document Upload Endpoint (`POST /upload`)
 
-**Request**: Multipart form data with `file` (PDF/DOCX) and `classification` (`public` / `confidential`).
-
-**Response**:
-```json
-{
-  "status": "success",
-  "filename": "financial_report_q2_2026.pdf",
-  "classification": "confidential",
-  "chunks": 32,
-  "collection": "protected_vault"
-}
-```
-
-### 3. Bulk Ingestion Endpoint (`POST /api/knowledge-base/ingest`)
+**Request**: Multipart form data with `files` (one or multiple PDF/DOCX files) and `classification` (`public` / `confidential`).
 
 **Response**:
 ```json
 {
   "status": "completed",
-  "documents_processed": 3,
-  "public_documents": 1,
-  "confidential_documents": 2,
-  "total_chunks": 46,
-  "failed_documents": 0,
-  "failures": [],
-  "processing_time_seconds": 1.42
+  "processed": 2,
+  "successful": 2,
+  "failed": 0,
+  "results": [
+    {
+      "filename": "employee_handbook.pdf",
+      "status": "success",
+      "classification": "public",
+      "chunks": 14,
+      "collection": "enterprise_docs"
+    },
+    {
+      "filename": "financial_report_q2_2026.pdf",
+      "status": "success",
+      "classification": "confidential",
+      "chunks": 32,
+      "collection": "protected_vault"
+    }
+  ]
 }
 ```
 
-### 4. Document Management Endpoints (`/api/documents`)
+### 3. Document Management Endpoints (`/api/documents`)
 
 - `GET /api/documents`: Returns comprehensive list of all indexed documents with document IDs, chunk counts, classification badges, and file sizes.
 - `DELETE /api/documents/{document_id}`: Permanently deletes document by `document_id`, purges vector embeddings from ChromaDB (`enterprise_docs` & `protected_vault`), removes physical disk files, logs audit events, and updates telemetry.
-- `POST /api/documents/bulk-upload`: Accepts multiple PDF/DOCX files, classifies as `public` or `confidential`, auto-ingests into vector stores, and returns per-file processing results.
 
-### 5. Telemetry Endpoints (`GET /api/dashboard/*`)
+### 4. Telemetry Endpoints (`GET /api/dashboard/*`)
 
 - `GET /api/dashboard/stats`: Returns live document counts, vault health, and query statistics.
 - `GET /api/dashboard/documents`: Returns list of ingested documents and repository locations.

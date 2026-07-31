@@ -46,41 +46,51 @@ def get_ingestion_service(request: Request) -> IngestionService:
     return service
 
 
-class UploadResponse(BaseModel):
-    """Response schema for document upload and ingestion operation."""
+class FileIngestionItemResult(BaseModel):
+    """Schema detailing result for individual document file ingestion."""
 
-    status: str = Field(..., example="success", description="Status of the ingestion operation")
     filename: str = Field(..., example="employee_handbook.pdf", description="Name of the processed file")
-    classification: str = Field(..., example="public", description="Security classification ('public' or 'confidential')")
-    chunks: int = Field(..., example=18, description="Total number of text chunks ingested")
-    collection: str = Field(..., example="enterprise_docs", description="Target vector store collection name")
+    status: str = Field(..., example="success", description="Status ('success' or 'failed')")
+    classification: str = Field("public", example="public", description="Security classification")
+    chunks: int = Field(0, example=18, description="Number of text chunks ingested")
+    collection: str = Field("enterprise_docs", example="enterprise_docs", description="Target vector store collection")
+    error: str | None = Field(None, example="File size exceeds 20MB limit.", description="Error message if failed")
+
+
+class UploadResponse(BaseModel):
+    """Response schema for unified multi-file upload and ingestion operation."""
+
+    status: str = Field("completed", example="completed", description="Overall ingestion status")
+    processed: int = Field(..., example=1, description="Total files processed")
+    successful: int = Field(..., example=1, description="Count of successfully ingested files")
+    failed: int = Field(0, example=0, description="Count of failed files")
+    results: list[FileIngestionItemResult] = Field(default_factory=list, description="Per-file detailed results")
+
+    # Compatibility fields for legacy single-file clients
+    filename: str = Field("", example="employee_handbook.pdf", description="Primary filename")
+    classification: str = Field("public", example="public", description="Primary security classification")
+    chunks: int = Field(0, example=18, description="Primary chunks count")
+    collection: str = Field("enterprise_docs", example="enterprise_docs", description="Primary collection")
 
 
 @router.post(
     "/upload",
     response_model=UploadResponse,
     status_code=status.HTTP_200_OK,
-    summary="Upload and Ingest Document",
+    summary="Upload and Ingest Documents",
     description=(
-        "Upload a PDF or DOCX document to be temporarily saved, classified as 'public' or 'confidential', "
-        "chunked, embedded, and stored into the ChromaDB vector store."
+        "Upload one or multiple PDF/DOCX documents, classify them as 'public' or 'confidential', "
+        "chunk, embed, and store them into ChromaDB vector stores."
     ),
 )
-def upload_document(
-    file: UploadFile = File(...),
-    classification: str = Form(default="public", description="Document security classification ('public' or 'confidential')"),
+def upload_documents(
+    request: Request,
+    files: list[UploadFile] = File(None),
+    file: UploadFile = File(None),
+    classification: str = Form(default="public", description="Security classification ('public' or 'confidential')"),
     ingestion_service: IngestionService = Depends(get_ingestion_service),
 ) -> UploadResponse:
-    """Handle document upload workflow, validation, temporary persistence, and vector ingestion."""
-    logger.info("Received document upload request for file: '%s' (classification='%s')", file.filename, classification)
-
-    if not file.filename or not file.filename.strip():
-        logger.warning("Rejected upload request: missing or empty filename")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file must have a valid filename.",
-        )
-
+    """Handle multi-file document upload, validation, batch ingestion, and audit logging."""
     clean_classification = classification.strip().lower()
     if clean_classification not in VALID_CLASSIFICATIONS:
         logger.warning("Rejected upload request: invalid classification '%s'", classification)
@@ -89,89 +99,149 @@ def upload_document(
             detail=f"Classification must be one of: {', '.join(sorted(VALID_CLASSIFICATIONS))}.",
         )
 
-    filename = file.filename.strip()
-    file_path = Path(filename)
-    extension = file_path.suffix.lower()
+    target_files: list[UploadFile] = []
+    if files:
+        target_files.extend(files)
+    if file and file not in target_files:
+        target_files.append(file)
 
-    # 1. Reject unsupported file formats
-    if extension not in ALLOWED_EXTENSIONS:
-        logger.warning("Rejected upload for file '%s': unsupported extension '%s'", filename, extension)
+    if not target_files:
+        logger.warning("Rejected upload request: no files provided")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type '{extension}'. Only PDF (.pdf) and DOCX (.docx) files are supported.",
+            detail="No files were provided for upload.",
         )
 
-    # 2. Read file content and reject empty files
-    try:
-        content = file.file.read()
-    except Exception as exc:
-        logger.error("Failed to read upload payload for file '%s': %s", filename, exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to read uploaded file payload: {exc}",
-        )
+    logger.info("Processing upload request for %d file(s) (classification='%s')", len(target_files), clean_classification)
 
-    if not content or len(content) == 0:
-        logger.warning("Rejected upload for file '%s': empty payload", filename)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file is empty. Please provide a valid document with content.",
-        )
+    max_bytes = 20 * 1024 * 1024  # 20MB payload limit
+    results: list[FileIngestionItemResult] = []
+    successful = 0
+    failed = 0
 
-    # 2b. Enforce 20MB payload size limit
-    max_bytes = 20 * 1024 * 1024
-    if len(content) > max_bytes:
-        logger.warning("Rejected upload for file '%s': size (%d bytes) exceeds 20MB limit", filename, len(content))
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail="File size exceeds maximum allowed upload limit of 20MB.",
-        )
+    for file_obj in target_files:
+        raw_name = file_obj.filename or "unnamed_document"
+        clean_name = raw_name.strip()
+        ext = Path(clean_name).suffix.lower()
 
-    # 3. Save temporarily inside configured classification subdirectory
-    uploads_dir = Path(settings.upload_folder) / clean_classification
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    temp_file_path = uploads_dir / filename
+        # 1. Reject invalid extensions
+        if ext not in ALLOWED_EXTENSIONS:
+            results.append(
+                FileIngestionItemResult(
+                    filename=clean_name,
+                    status="failed",
+                    classification=clean_classification,
+                    chunks=0,
+                    error=f"Unsupported file type '{ext}'. Only .pdf and .docx allowed.",
+                )
+            )
+            failed += 1
+            continue
 
-    try:
-        with open(temp_file_path, "wb") as buffer:
-            buffer.write(content)
-        logger.info("Temporarily stored document payload at '%s'", temp_file_path)
+        # 2. Read content and validate non-empty and max size
+        try:
+            content = file_obj.file.read()
+        except Exception as read_exc:
+            results.append(
+                FileIngestionItemResult(
+                    filename=clean_name,
+                    status="failed",
+                    classification=clean_classification,
+                    chunks=0,
+                    error=f"Failed to read payload: {read_exc}",
+                )
+            )
+            failed += 1
+            continue
 
-        # 4. Invoke existing IngestionService
-        ingestion_result: dict[str, Any] = ingestion_service.ingest(temp_file_path)
+        if not content or len(content) == 0:
+            results.append(
+                FileIngestionItemResult(
+                    filename=clean_name,
+                    status="failed",
+                    classification=clean_classification,
+                    chunks=0,
+                    error="File is empty.",
+                )
+            )
+            failed += 1
+            continue
 
-        # 5. Return structured JSON matching API response contract
-        return UploadResponse(
-            status=ingestion_result.get("status", "success"),
-            filename=ingestion_result.get("file_name", filename),
-            classification=ingestion_result.get("classification", clean_classification),
-            chunks=ingestion_result.get("chunks", 0),
-            collection=ingestion_result.get("collection", "enterprise_docs"),
-        )
+        if len(content) > max_bytes:
+            results.append(
+                FileIngestionItemResult(
+                    filename=clean_name,
+                    status="failed",
+                    classification=clean_classification,
+                    chunks=0,
+                    error="File size exceeds maximum 20MB limit.",
+                )
+            )
+            failed += 1
+            continue
 
-    except (ValueError, FileNotFoundError) as exc:
-        logger.warning("Validation or file error during ingestion of '%s': %s", filename, exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
-    except RuntimeError as exc:
-        logger.error("Runtime error during ingestion of '%s': %s", filename, exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ingestion service runtime error: {exc}",
-        )
-    except Exception as exc:
-        logger.exception("Unexpected error during document upload of '%s': %s", filename, exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred during document processing: {exc}",
-        )
-    finally:
-        # 6. Clean up temporary file
-        if temp_file_path.exists():
+        # 3. Save temporary file in Documents/{classification}/
+        target_dir = Path("Documents") / clean_classification
+        target_dir.mkdir(parents=True, exist_ok=True)
+        temp_file_path = target_dir / clean_name
+
+        try:
+            with open(temp_file_path, "wb") as f:
+                f.write(content)
+
+            # 4. Ingest file into ChromaDB
+            ingest_res = ingestion_service.ingest(temp_file_path, classification=clean_classification)
+
+            # 5. Log Security Audit Event
             try:
-                temp_file_path.unlink()
-                logger.info("Successfully removed temporary file '%s'", temp_file_path)
-            except Exception as clean_exc:
-                logger.warning("Could not delete temporary file '%s': %s", temp_file_path, clean_exc)
+                audit_logger = getattr(request.app.state, "audit_logger", None)
+                if audit_logger:
+                    audit_logger.log_event(
+                        question=f"UPLOAD /upload '{clean_name}'",
+                        decision="SYSTEM_ACTION",
+                        severity="LOW",
+                        categories=["DOCUMENT_MANAGEMENT"],
+                        reason=f"Uploaded and ingested '{clean_name}' ({clean_classification}) into vector store ({ingest_res.get('chunks', 0)} chunks).",
+                        matched_document=clean_name,
+                        confidence=1.0,
+                    )
+            except Exception:
+                pass
+
+            results.append(
+                FileIngestionItemResult(
+                    filename=clean_name,
+                    status="success",
+                    classification=clean_classification,
+                    chunks=ingest_res.get("chunks", 0),
+                    collection=ingest_res.get("collection", "enterprise_docs"),
+                )
+            )
+            successful += 1
+
+        except Exception as exc:
+            logger.error("Failed to ingest file '%s': %s", clean_name, exc)
+            results.append(
+                FileIngestionItemResult(
+                    filename=clean_name,
+                    status="failed",
+                    classification=clean_classification,
+                    chunks=0,
+                    error=str(exc),
+                )
+            )
+            failed += 1
+
+    first_success = next((r for r in results if r.status == "success"), None) or (results[0] if results else None)
+
+    return UploadResponse(
+        status="completed",
+        processed=len(target_files),
+        successful=successful,
+        failed=failed,
+        results=results,
+        filename=first_success.filename if first_success else "",
+        classification=first_success.classification if first_success else clean_classification,
+        chunks=first_success.chunks if first_success else 0,
+        collection=first_success.collection if first_success else "enterprise_docs",
+    )

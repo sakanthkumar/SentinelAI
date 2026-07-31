@@ -6,9 +6,7 @@ import {
   Globe,
   CheckCircle2,
   AlertCircle,
-  Database,
   RefreshCw,
-  FolderPlus,
   Loader2,
   Search,
   Inbox,
@@ -17,24 +15,30 @@ import {
   FileUp,
 } from "lucide-react";
 import { useUpload } from "../hooks/useUpload";
+import { useDashboard } from "../hooks/useDashboard";
+import { useSecurityEvents } from "../hooks/useSecurityEvents";
 import type { DocumentDetail } from "../types";
 
 export const DocumentCenterPage: React.FC = () => {
+  const { refreshStats } = useDashboard();
+  const { refreshEvents } = useSecurityEvents();
+
+  const handleGlobalRefresh = () => {
+    refreshStats();
+    refreshEvents();
+  };
+
   const {
     documents,
     isLoadingDocs,
     isUploading,
     isDeletingId,
-    isBulkIngesting,
-    bulkIngestResult,
     notification,
-    uploadFile,
-    bulkUpload,
+    uploadFiles,
     deleteDocument,
-    triggerBulkIngest,
     refreshDocuments,
     clearNotification,
-  } = useUpload();
+  } = useUpload(handleGlobalRefresh);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [classification, setClassification] = useState<"public" | "confidential">("public");
@@ -69,11 +73,7 @@ export const DocumentCenterPage: React.FC = () => {
     e.preventDefault();
     if (selectedFiles.length === 0 || isUploading) return;
 
-    if (selectedFiles.length === 1) {
-      await uploadFile(selectedFiles[0], classification);
-    } else {
-      await bulkUpload(selectedFiles, classification);
-    }
+    await uploadFiles(selectedFiles, classification);
     setSelectedFiles([]);
   };
 
@@ -107,41 +107,23 @@ export const DocumentCenterPage: React.FC = () => {
             </span>
           </h1>
           <p className="text-slate-400 text-sm mt-1">
-            Ingest, manage, and delete enterprise documents with automatic vector embedding purging and file cleanup.
+            Upload, classify, and delete enterprise documents with automatic vector embedding management.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={refreshDocuments}
-            disabled={isLoadingDocs}
-            aria-label="Refresh Documents List"
-            title="Refresh Documents List"
-            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoadingDocs ? "animate-spin" : ""}`} aria-hidden="true" />
-          </button>
-
-          {/* Bulk Ingest Directory Trigger */}
-          <button
-            onClick={triggerBulkIngest}
-            disabled={isBulkIngesting}
-            aria-label="Ingest Knowledge Base Directory"
-            className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-purple-500/25 transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-purple-500"
-          >
-            {isBulkIngesting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                <span>Bulk Ingesting Directory...</span>
-              </>
-            ) : (
-              <>
-                <FolderPlus className="w-4 h-4" aria-hidden="true" />
-                <span>Ingest Knowledge Base Directory</span>
-              </>
-            )}
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            refreshDocuments();
+            handleGlobalRefresh();
+          }}
+          disabled={isLoadingDocs}
+          aria-label="Refresh Documents Inventory"
+          title="Refresh Documents Inventory"
+          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-colors flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDocs ? "animate-spin" : ""}`} aria-hidden="true" />
+          <span>Refresh Inventory</span>
+        </button>
       </div>
 
       {/* Notification Toast */}
@@ -167,48 +149,20 @@ export const DocumentCenterPage: React.FC = () => {
         </div>
       )}
 
-      {/* Bulk Ingest Summary Breakdown Card */}
-      {bulkIngestResult && (
-        <div className="bg-slate-900 border border-purple-900/60 p-5 rounded-2xl space-y-3">
-          <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2">
-            <Database className="w-4 h-4 text-purple-400" aria-hidden="true" />
-            Directory Ingestion Summary
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block">Documents Processed</span>
-              <span className="text-lg font-bold text-white">{bulkIngestResult.documents_processed}</span>
-            </div>
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block">Public Documents</span>
-              <span className="text-lg font-bold text-cyan-400">{bulkIngestResult.public_documents}</span>
-            </div>
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block">Confidential Vault Docs</span>
-              <span className="text-lg font-bold text-purple-400">{bulkIngestResult.confidential_documents}</span>
-            </div>
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <span className="text-slate-400 block">Total Text Chunks Stored</span>
-              <span className="text-lg font-bold text-emerald-400">{bulkIngestResult.total_chunks}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Two Columns: Upload & Multi-File Queue (Left) & Document Directory Table (Right) */}
+      {/* Two Columns: Multi-File Upload Box (Left) & Document Directory Table (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Upload Form Box */}
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl space-y-4">
           <h2 className="text-sm font-bold text-white flex items-center gap-2">
             <FileUp className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-            Upload & Ingest Documents
+            Upload Documents
           </h2>
 
           <form onSubmit={handleUploadSubmit} className="space-y-4">
             {/* Classification Selector */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-300 block">
-                Target Knowledge Classification:
+                Target Classification:
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -241,7 +195,7 @@ export const DocumentCenterPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Drag & Drop Multi-File Select */}
+            {/* Drag & Drop Multi-File Select Box */}
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -278,15 +232,15 @@ export const DocumentCenterPage: React.FC = () => {
                 ) : (
                   <div className="space-y-1">
                     <p className="text-xs font-semibold text-slate-200">
-                      Drag & Drop PDF/DOCX files or folders
+                      Drag & Drop PDF or DOCX files here
                     </p>
-                    <p className="text-[10px] text-slate-400">Select multiple files for batch upload & ingest</p>
+                    <p className="text-[10px] text-slate-400">Select one or multiple files to ingest</p>
                   </div>
                 )}
               </label>
             </div>
 
-            {/* Selected File Queue List */}
+            {/* Queue List of Selected Files */}
             {selectedFiles.length > 0 && (
               <div className="max-h-32 overflow-y-auto space-y-1 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
                 {selectedFiles.map((f, idx) => (
@@ -301,7 +255,7 @@ export const DocumentCenterPage: React.FC = () => {
             <button
               type="submit"
               disabled={selectedFiles.length === 0 || isUploading}
-              aria-label="Upload & Ingest Selected Files"
+              aria-label="Upload and Start Ingestion"
               className="w-full py-2.5 bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-indigo-500/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500"
             >
               {isUploading ? (
@@ -310,7 +264,7 @@ export const DocumentCenterPage: React.FC = () => {
                   <span>Uploading & Ingesting Chunks...</span>
                 </>
               ) : (
-                <span>Upload & Start Ingestion ({selectedFiles.length})</span>
+                <span>Upload & Start Ingestion {selectedFiles.length > 0 ? `(${selectedFiles.length})` : ""}</span>
               )}
             </button>
           </form>
@@ -414,7 +368,7 @@ export const DocumentCenterPage: React.FC = () => {
               <Inbox className="w-8 h-8 text-slate-600" aria-hidden="true" />
               <p className="text-xs font-semibold text-slate-400">No Documents Found</p>
               <p className="text-[11px] text-slate-500 max-w-xs">
-                Upload files using the multi-file uploader or click "Ingest Knowledge Base Directory".
+                Upload files using the multi-file uploader above.
               </p>
             </div>
           )}

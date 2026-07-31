@@ -3,7 +3,6 @@
  */
 
 import type {
-  BulkIngestResponse,
   ChatRequest,
   ChatResponse,
   DashboardStatsResponse,
@@ -64,23 +63,17 @@ export const chatApi = {
 };
 
 export const documentsApi = {
-  async upload(file: File, classification: string = "public"): Promise<UploadResponse> {
+  async upload(files: File | File[], classification: string = "public"): Promise<any> {
     const formData = new FormData();
-    formData.append("file", file);
+    const fileArray = Array.isArray(files) ? files : [files];
+    fileArray.forEach((file) => formData.append("files", file));
     formData.append("classification", classification);
 
     const response = await fetch(`${BASE_URL}/upload`, {
       method: "POST",
       body: formData,
     });
-    return handleResponse<UploadResponse>(response);
-  },
-
-  async bulkIngest(): Promise<BulkIngestResponse> {
-    const response = await fetch(`${BASE_URL}/api/knowledge-base/ingest`, {
-      method: "POST",
-    });
-    return handleResponse<BulkIngestResponse>(response);
+    return handleResponse<any>(response);
   },
 
   async list(): Promise<DocumentDetail[]> {
@@ -93,18 +86,6 @@ export const documentsApi = {
   async deleteDocument(documentId: string): Promise<any> {
     const response = await fetch(`${BASE_URL}/api/documents/${encodeURIComponent(documentId)}`, {
       method: "DELETE",
-    });
-    return handleResponse<any>(response);
-  },
-
-  async bulkUpload(files: File[], classification: string = "public"): Promise<any> {
-    const formData = new FormData();
-    files.forEach((file) => formData.append("files", file));
-    formData.append("classification", classification);
-
-    const response = await fetch(`${BASE_URL}/api/documents/bulk-upload`, {
-      method: "POST",
-      body: formData,
     });
     return handleResponse<any>(response);
   },

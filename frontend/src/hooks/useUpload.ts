@@ -1,18 +1,16 @@
 /**
- * Custom hook for managing document upload queue, multi-file bulk ingestion, and single-click deletion.
+ * Custom hook for managing document upload queue, multi-file ingestion, and single-click deletion.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { documentsApi } from "../services/api";
-import type { BulkIngestResponse, DocumentDetail } from "../types";
+import type { DocumentDetail } from "../types";
 
-export function useUpload() {
+export function useUpload(onSuccessCallback?: () => void) {
   const [documents, setDocuments] = useState<DocumentDetail[]>([]);
   const [isLoadingDocs, setIsLoadingDocs] = useState<boolean>(true);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
-  const [isBulkIngesting, setIsBulkIngesting] = useState<boolean>(false);
-  const [bulkIngestResult, setBulkIngestResult] = useState<BulkIngestResponse | null>(null);
   const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const fetchDocuments = useCallback(async () => {
@@ -21,8 +19,8 @@ export function useUpload() {
       if (Array.isArray(data)) {
         setDocuments(data);
       }
-    } catch (err: any) {
-      logger_fallback(err);
+    } catch {
+      // Fallback
     } finally {
       setIsLoadingDocs(false);
     }
@@ -32,67 +30,51 @@ export function useUpload() {
     fetchDocuments();
   }, [fetchDocuments]);
 
-  function logger_fallback(err: any) {
-    // Silent fallback
-  }
-
-  const uploadFile = useCallback(
-    async (file: File, classification: "public" | "confidential") => {
+  const uploadFiles = useCallback(
+    async (files: File | File[], classification: "public" | "confidential") => {
       setIsUploading(true);
       setNotification(null);
 
-      try {
-        const res = await documentsApi.upload(file, classification);
-        await fetchDocuments();
-        setNotification({
-          type: "success",
-          message: `Successfully ingested '${res.filename}' into vector store (${res.chunks} chunks).`,
-        });
-      } catch (err: any) {
-        setNotification({
-          type: "error",
-          message: err.message || `Failed to upload and ingest '${file.name}'.`,
-        });
-      } finally {
-        setIsUploading(false);
-      }
-    },
-    [fetchDocuments]
-  );
-
-  const bulkUpload = useCallback(
-    async (files: File[], classification: "public" | "confidential") => {
-      setIsUploading(true);
-      setNotification(null);
+      const fileArray = Array.isArray(files) ? files : [files];
 
       try {
-        const res = await documentsApi.bulkUpload(files, classification);
+        const res = await documentsApi.upload(fileArray, classification);
         await fetchDocuments();
-        const successCount = res.successful || 0;
-        const failCount = res.failed || 0;
+        if (onSuccessCallback) onSuccessCallback();
+
+        const successCount = res.successful ?? res.processed ?? 1;
+        const failCount = res.failed ?? 0;
+        const total = res.processed ?? fileArray.length;
 
         if (failCount === 0) {
-          setNotification({
-            type: "success",
-            message: `Successfully ingested ${successCount} document(s) into vector store.`,
-          });
+          if (total === 1 && res.results?.[0]?.filename) {
+            setNotification({
+              type: "success",
+              message: `Uploaded '${res.results[0].filename}' successfully (${res.results[0].chunks} vector chunks stored).`,
+            });
+          } else {
+            setNotification({
+              type: "success",
+              message: `Uploaded ${successCount} document(s) successfully.`,
+            });
+          }
         } else {
           setNotification({
             type: "error",
-            message: `Bulk upload completed: ${successCount} succeeded, ${failCount} failed. Check document list for details.`,
+            message: `Uploaded ${total} document(s): ${successCount} succeeded, ${failCount} failed.`,
           });
         }
         return res;
       } catch (err: any) {
         setNotification({
           type: "error",
-          message: err.message || "Failed to execute multi-file bulk upload.",
+          message: err.message || "Failed to complete document upload and ingestion.",
         });
       } finally {
         setIsUploading(false);
       }
     },
-    [fetchDocuments]
+    [fetchDocuments, onSuccessCallback]
   );
 
   const deleteDocument = useCallback(
@@ -103,6 +85,8 @@ export function useUpload() {
       try {
         const res = await documentsApi.deleteDocument(documentId);
         await fetchDocuments();
+        if (onSuccessCallback) onSuccessCallback();
+
         setNotification({
           type: "success",
           message: res.message || `Document deleted successfully and vectors purged from ChromaDB.`,
@@ -116,45 +100,17 @@ export function useUpload() {
         setIsDeletingId(null);
       }
     },
-    [fetchDocuments]
+    [fetchDocuments, onSuccessCallback]
   );
-
-  const triggerBulkIngest = useCallback(async () => {
-    setIsBulkIngesting(true);
-    setNotification(null);
-    setBulkIngestResult(null);
-
-    try {
-      const res: BulkIngestResponse = await documentsApi.bulkIngest();
-      setBulkIngestResult(res);
-      await fetchDocuments();
-
-      setNotification({
-        type: "success",
-        message: `Bulk ingestion complete: Processed ${res.documents_processed} documents (${res.total_chunks} text chunks stored in ChromaDB).`,
-      });
-    } catch (err: any) {
-      setNotification({
-        type: "error",
-        message: err.message || "Failed to trigger bulk knowledge base ingestion.",
-      });
-    } finally {
-      setIsBulkIngesting(false);
-    }
-  }, [fetchDocuments]);
 
   return {
     documents,
     isLoadingDocs,
     isUploading,
     isDeletingId,
-    isBulkIngesting,
-    bulkIngestResult,
     notification,
-    uploadFile,
-    bulkUpload,
+    uploadFiles,
     deleteDocument,
-    triggerBulkIngest,
     refreshDocuments: fetchDocuments,
     clearNotification: () => setNotification(null),
   };
