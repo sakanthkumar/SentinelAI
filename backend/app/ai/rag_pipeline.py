@@ -16,7 +16,7 @@ class RAGPipeline:
     """Orchestrates the Retrieval-Augmented Generation (RAG) workflow with integrated leak detection.
 
     Combines semantic document retrieval with pre-generation security inspection using LeakDetector
-    and secret redaction to prevent data exfiltration.
+    and PolicyEngine evaluation to prevent data exfiltration.
     """
 
     def __init__(
@@ -104,7 +104,7 @@ class RAGPipeline:
                 sanitized.append({
                     "source": display_name,
                     "classification": classification,
-                    "text": "[REDACTED - SECURITY POLICY VIOLATION]",
+                    "text": "[BLOCKED - SECURITY POLICY VIOLATION]",
                 })
             else:
                 display_name = source_name if (self.expose_document_names or classification == "public") else "Protected Document"

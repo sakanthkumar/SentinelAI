@@ -218,7 +218,7 @@ export const DashboardPage: React.FC<{ onNavigateToChat: () => void }> = ({ onNa
           </div>
           <div className="mt-3 flex items-center gap-1.5 text-xs text-rose-400/90 border-t border-slate-800/80 pt-2.5 font-medium">
             <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Secrets Redacted</span>
+            <span>Policy Violations Blocked</span>
           </div>
         </div>
 
@@ -236,7 +236,7 @@ export const DashboardPage: React.FC<{ onNavigateToChat: () => void }> = ({ onNa
           </div>
           <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-400 border-t border-slate-800/80 pt-2.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
-            <span>Sanitized Sources</span>
+            <span>Source Citations</span>
           </div>
         </div>
       </div>

@@ -21,7 +21,7 @@ class SensitiveItem:
         if redact:
             return {
                 "type": self.type,
-                "value": "[REDACTED]",
+                "value": "[PROTECTED]",
                 "redacted": True,
             }
         return {

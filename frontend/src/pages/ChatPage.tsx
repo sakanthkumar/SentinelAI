@@ -62,7 +62,7 @@ export const ChatPage: React.FC = () => {
             </div>
             <div>
               <h2 className="text-sm font-bold text-white">RAG Security Chat</h2>
-              <p className="text-[11px] text-slate-400">Inspected post-generation by LeakDetector PolicyEngine</p>
+              <p className="text-[11px] text-slate-400">Evaluated by Semantic DLP & PolicyEngine</p>
             </div>
           </div>
 
@@ -220,7 +220,7 @@ export const ChatPage: React.FC = () => {
               <div className="p-4 rounded-2xl rounded-tl-none bg-slate-800/60 border border-slate-700/60 space-y-2 w-64">
                 <div className="h-3 bg-slate-700/60 rounded animate-pulse w-3/4"></div>
                 <div className="h-3 bg-slate-700/60 rounded animate-pulse w-1/2"></div>
-                <p className="text-[10px] text-cyan-400 font-medium animate-pulse">Running FactualOverlapDetector & PolicyEngine...</p>
+                <p className="text-[10px] text-cyan-400 font-medium animate-pulse">Running Semantic DLP Classifier & PolicyEngine...</p>
               </div>
             </div>
           )}
@@ -337,11 +337,11 @@ export const ChatPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Redacted Sensitive Items */}
+            {/* Protected Data Assessment */}
             <div className="space-y-1.5 bg-slate-950 p-3.5 rounded-xl border border-slate-800">
               <div className="flex items-center space-x-1.5 text-slate-300 font-semibold">
                 <Lock className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
-                <span>Sensitive Items (Public Redaction Enforced):</span>
+                <span>Protected Data Assessment:</span>
               </div>
               {activeDlpReport.sensitive_items && activeDlpReport.sensitive_items.length > 0 ? (
                 <div className="space-y-1.5 pt-1">
@@ -352,7 +352,7 @@ export const ChatPage: React.FC = () => {
                     >
                       <span className="font-mono text-indigo-300 font-semibold">{item.type}</span>
                       <span className="font-mono text-amber-400 font-bold px-2 py-0.5 rounded bg-slate-950 border border-amber-900/60">
-                        {item.value || "[REDACTED]"}
+                        {item.value || "[PROTECTED]"}
                       </span>
                     </div>
                   ))}
